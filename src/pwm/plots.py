@@ -125,6 +125,64 @@ def _pass_mark(ax, report: Report) -> None:
     )
 
 
+def plot_ranking(report, path: Path, encoder: str) -> None:
+    """The ranking test: the predictor's score of every candidate against the judge's
+    distance (left), and the rank correlation per starting state with the control (right)."""
+    s = report.summary()
+    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
+    fig, (left, right) = plt.subplots(1, 2, figsize=(11, 4.6), layout="constrained", facecolor=SURFACE,
+                                      gridspec_kw={"width_ratios": [1.15, 1]})
+    fig.suptitle(f"Ranking test on Push-T, {encoder}: {s['starts']} starting states x {s['candidates']} candidate paths",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold", color=INK)
+
+    judged, predicted = np.ravel(report.judged), np.ravel(report.predicted)
+    top = max(judged.max(), predicted.max()) * 1.05
+    _plain(left)
+    left.plot([0, top], [0, top], color=FLOOR_COLOUR, linewidth=1.5, zorder=1, label="predicted = judged")
+    left.scatter(judged, predicted, s=10, color=COLOURS[PREDICTOR], alpha=0.35, linewidths=0, zorder=2,
+                 label="one candidate path")
+    left.set_xlim(0, top), left.set_ylim(0, top)
+    left.set_aspect("equal")
+    left.set_xlabel(f"judge: final distance of the T to the goal ({report.unit})", color=INK_2)
+    left.set_ylabel(f"predictor: expected final distance ({report.unit})", color=INK_2)
+    left.set_title("Every candidate path", color=INK_2, fontsize=9, loc="left")
+    left.legend(frameon=False, fontsize=8, labelcolor=INK_2, loc="upper left")
+
+    _plain(right)
+    rows = [(PREDICTOR, "predictor", s["predictor"]), (SHUFFLED, "predictor,\nshuffled actions", s["control"])]
+    jitter = np.random.default_rng(0)
+    for y, (name, label, r) in enumerate(rows):
+        rho = np.array(r["spearman_per_start"])
+        rho = rho[~np.isnan(rho)]
+        right.scatter(rho, y + jitter.uniform(-0.18, 0.18, len(rho)), s=22, color=COLOURS[name], alpha=0.7,
+                      linewidths=0, zorder=2)
+        right.errorbar(r["spearman_mean"], y, xerr=1.96 * r["spearman_se"], fmt="o", color=INK, markersize=7,
+                       markeredgecolor=SURFACE, markeredgewidth=1.5, capsize=0, linewidth=2, zorder=3)
+        right.annotate(f"mean {r['spearman_mean']:+.2f}", xy=(r["spearman_mean"], y - 0.3), ha="center",
+                       va="top", fontsize=8, color=INK)
+    right.axvline(0, color=FLOOR_COLOUR, linewidth=1.5, zorder=1)
+    right.set_yticks(range(len(rows)), [label for _, label, _ in rows])
+    right.set_ylim(len(rows) - 0.5, -0.6)
+    right.set_xlim(-1.05, 1.05)
+    right.set_xlabel("Spearman rank correlation with the judge, per starting state", color=INK_2)
+    right.set_title("Rank agreement (black: mean, 95% interval)", color=INK_2, fontsize=9, loc="left")
+    right.grid(axis="x", color=GRID, linewidth=0.8)
+    right.grid(axis="y", visible=False)
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def _plain(ax) -> None:
+    ax.set_facecolor(SURFACE)
+    ax.grid(color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(FLOOR_COLOUR)
+    ax.tick_params(colors=MUTED, length=0, labelcolor=INK_2)
+
+
 def save_retrievals(rows: list[dict], horizons: list[int], path: Path, unit: str) -> None:
     """A grid of frames: per held-out rollout, the true frames and the nearest real frame to
     each prediction. `rows` = [{"label": str, "frames": [img now, img at each horizon],

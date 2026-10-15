@@ -13,6 +13,7 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/retrievals.png  nearest real frames of a few rollouts  (retrievals)
     <root>/<dataset>/error-vs-horizon.png      every evaluated encoder, one row each  (compare)
     <root>/<dataset>/winner.json               the winning encoder and why            (compare)
+    <root>/<dataset>/<encoder>/ranking/        ranking.json, report.md, ranking.png   (rank)
 
 The root is the `root` argument, else the PWM_DATA environment variable, else ./data.
 """
@@ -29,10 +30,12 @@ from pwm.encoders import get_encoder
 from pwm.episodes import Episode, load_episodes, save_episodes
 from pwm.evaluator import GATE_HORIZON, HORIZONS, PREDICTOR, Report, nearest_frames, winning_encoder
 from pwm.evaluator import evaluate as evaluate_episodes
-from pwm.plots import plot_errors, save_retrievals
+from pwm.plots import ENCODER_NAMES, plot_errors, plot_ranking, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
-from pwm.windows import make_windows
+from pwm.probe import Probe
+from pwm.ranking import RankingReport, candidate_paths
+from pwm.windows import CONTEXT, make_windows
 
 
 def data_root(root: str | Path | None = None) -> Path:
@@ -189,6 +192,104 @@ def retrievals(dataset: str, encoder: str, root: str | Path | None = None, n_rol
     path = folder / encoder / "retrievals.png"
     save_retrievals(rows, HORIZONS, path, held_episodes[0].unit)
     return path
+
+
+def rank(
+    dataset: str, encoder: str, root: str | Path | None = None, n_candidates: int = 32, horizon: int = 8, seed: int = 0
+) -> RankingReport:
+    """The ranking test on Push-T, judged by Push-T's own simulator. Writes ranking/ in the
+    encoder's folder: ranking.json, report.md and ranking.png.
+
+    One starting state per held-out episode: a frame drawn by `seed` among those with two
+    steps of history (the predictor's context) and `horizon` steps of future in which the T
+    really moves. From each, `n_candidates` candidate paths perturb the recorded pusher path
+    over the next `horizon` steps (candidate 0 is the recorded path). The predictor rolls
+    each candidate out from the real context frames; the probe reads its final T centre;
+    the score is that centre's distance to the goal. The judge replays the recorded path up
+    to the start (so the T starts exactly where it was, moving as it was), then the
+    candidate. The control rolls each candidate out with the actions of another candidate
+    path (a fixed permutation over all candidates of all starts).
+    """
+    assert dataset == "pusht", "the ranking test needs Push-T's judge and goal"
+    from pwm.datasets import pusht
+    from pwm.replay import Push, get_replay
+
+    folder = data_root(root) / dataset
+    gate = Report.load(folder / encoder).validation_gate
+    assert gate, f"the ranking test runs only if the validation gate passed ({encoder}: {gate})"
+    episodes = load_episodes(folder / "episodes")
+    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    spec = DATASETS[dataset]
+    train_ids = [i for i, ep in enumerate(episodes) if ep.split == "train"]
+    probe = Probe.fit([embeddings[i] for i in train_ids], [episodes[i].object_pos for i in train_ids])
+    predictor = Predictor.load(folder / encoder / _predictor_file(blind=False), _device())
+    poses = pusht.block_poses(folder / "raw")
+    judge = get_replay("pusht")
+    goal = pusht.goal_centre()
+    rng = np.random.default_rng(seed)
+    stride = int(round(spec.step * pusht.FPS))  # frames per step
+    span = horizon * stride
+
+    starts, contexts, positions, candidates, plans = [], [], [], [], []
+    for ep, emb in zip(episodes, embeddings):
+        if ep.split != "held-out":
+            continue
+        frames = np.arange((CONTEXT - 1) * stride, len(ep.frames) - span)
+        moved = np.array([np.linalg.norm(ep.object_pos[t + stride : t + span + 1 : stride] - ep.object_pos[t], axis=1).max()
+                          for t in frames])
+        frames = frames[moved > spec.move_threshold]
+        if not len(frames):
+            continue
+        t = int(rng.choice(frames))
+        context = t - stride * np.arange(CONTEXT - 1, -1, -1)  # frames of the context
+        paths = candidate_paths(ep.pusher_pos[t : t + span + 1], n_candidates, seed=seed + len(starts),
+                                workspace=ep.workspace)
+        starts.append(f"{ep.name} frame {t}")
+        contexts.append(np.asarray(emb[context]))
+        positions.append(ep.pusher_pos[context])
+        candidates.append(paths)
+        plans.append((ep, t))
+
+    actions = np.stack([np.diff(paths[:, ::stride], axis=1) for paths in candidates])  # (S, N, H, 2)
+    shuffled = actions.reshape(-1, horizon, 2)[np.random.default_rng(seed).permutation(actions.shape[0] * n_candidates)]
+    shuffled = shuffled.reshape(actions.shape)
+
+    def final_centres(run_actions):
+        out = []
+        for context, pos, a in zip(contexts, positions, run_actions):
+            n = len(a)
+            predicted = predictor.rollout(np.repeat(context[None], n, 0), np.repeat(pos[None], n, 0), a)
+            out.append(probe.predict(predicted[:, -1]))
+        return np.array(out)  # (S, N, 2)
+
+    predicted, control = final_centres(actions), final_centres(shuffled)
+
+    judged, judge_check = [], []
+    for (ep, t), paths in zip(plans, candidates):
+        finals = []
+        for path in paths:
+            push = Push(path=np.concatenate([ep.pusher_pos[:t], path]),
+                        timestamps=np.concatenate([ep.timestamps[:t], ep.timestamps[t] + np.arange(len(path)) / pusht.FPS]),
+                        start=poses[ep.name][0], shape="T", unit=ep.unit, workspace=ep.workspace)
+            finals.append(judge.replay(push).final[:2])
+        judged.append(finals)
+        judge_check.append(float(np.linalg.norm(finals[0] - ep.object_pos[t + span])))
+    judged = np.array(judged)
+    now = np.array([ep.object_pos[t] for ep, t in plans])[:, None]
+
+    report = RankingReport(
+        unit=episodes[0].unit, step=spec.step, horizon=horizon, seed=seed, starts=starts,
+        predicted=np.linalg.norm(predicted - goal, axis=-1).tolist(),
+        control=np.linalg.norm(control - goal, axis=-1).tolist(),
+        judged=np.linalg.norm(judged - goal, axis=-1).tolist(),
+        judge_check=judge_check,
+        final_error=np.linalg.norm(predicted - judged, axis=-1).tolist(),
+        static_error=np.linalg.norm(now - judged, axis=-1).tolist(),
+    )
+    out = folder / encoder / "ranking"
+    report.save(out)
+    plot_ranking(report, out / "ranking.png", ENCODER_NAMES.get(encoder, encoder))
+    return report
 
 
 def _predictor_file(blind: bool) -> str:
