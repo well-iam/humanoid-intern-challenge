@@ -19,7 +19,7 @@ import numpy as np
 import torch
 
 # Ridge strengths tried, relative to the mean squared norm of a standardised frame embedding.
-RIDGE_GRID = [10.0**k for k in range(-8, 2)]
+RIDGE_GRID = [10.0**k for k in range(-7, 2)]
 VALIDATION_EVERY = 5  # every 5th training episode helps choose the ridge strength
 BLOCK_BYTES = 2**30  # size of one block of features in float32
 GPU_ABOVE = 2**26  # use the GPU (if any) when frames x features is above this
@@ -104,11 +104,15 @@ def _choose_ridge(gram: torch.Tensor, y: torch.Tensor, lengths: list[int]) -> fl
     k_val = gram[val][:, fit] - row_mean[val, None] - row_mean[None, fit] + total
     y_mean = y[fit].mean(0)
 
-    values, vectors = torch.linalg.eigh(k_fit)
-    projected = vectors.T @ (y[fit] - y_mean)
     scale = _scale(k_fit)
+    eye = torch.eye(len(k_fit), dtype=k_fit.dtype, device=k_fit.device)
     errors = []
     for ridge in RIDGE_GRID:
-        a = vectors @ (projected / (values.clamp(min=0) + ridge * scale)[:, None])
+        # One Cholesky solve per strength: several times faster than one eigendecomposition.
+        factor, info = torch.linalg.cholesky_ex(k_fit + ridge * scale * eye)
+        if info:  # too weak a ridge for float precision: the system is not positive definite
+            errors.append(np.inf)
+            continue
+        a = torch.cholesky_solve(y[fit] - y_mean, factor)
         errors.append(float(torch.linalg.norm(k_val @ a + y_mean - y[val], dim=1).mean()))
     return RIDGE_GRID[int(np.argmin(errors))]
