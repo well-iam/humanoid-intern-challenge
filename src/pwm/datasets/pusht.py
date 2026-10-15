@@ -62,6 +62,17 @@ def build(raw_dir: Path) -> list[Episode]:
     return episodes
 
 
+def block_poses(raw_dir: Path) -> dict[str, np.ndarray]:
+    """The T's recorded pose (centre x, centre y, angle) per frame, for every episode in the file
+    (also the ones not chosen for the split), keyed by episode name. The replay simulators
+    start from these; the episodes themselves carry only the position."""
+    group = zarr.open_group(ZipStore(download(raw_dir), mode="r"), mode="r", path=ZARR_PATH)
+    ends = group["meta/episode_ends"][:]
+    block = group["data/state"][:, 2:5].astype(np.float64)
+    poses = np.concatenate([t_centre(block), block[:, 2:3]], axis=1)
+    return {f"pusht-{i:03d}": p for i, p in enumerate(np.split(poses, ends[:-1]))}
+
+
 def t_centre(block: np.ndarray) -> np.ndarray:
     """Centre of the T from the stored block pose (x, y, angle): (x - 45 sin a, y + 45 cos a)."""
     x, y, angle = block.astype(np.float64).T
