@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from pwm.datasets import toy
+from pwm.datasets import pusht, toy
 from pwm.episodes import Episode
 
 
@@ -17,4 +17,5 @@ class Dataset:
 
 DATASETS = {
     "toy": Dataset(build=toy.build, step=toy.STEP, move_threshold=toy.MOVE_THRESHOLD),
+    "pusht": Dataset(build=pusht.build, step=pusht.STEP, move_threshold=pusht.MOVE_THRESHOLD),
 }

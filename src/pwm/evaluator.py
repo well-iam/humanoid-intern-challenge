@@ -145,10 +145,7 @@ def evaluate(
     held_out = [ep for ep in episodes if ep.split == "held-out"]
     held_out_embeddings = [embeddings[i] for i, ep in enumerate(episodes) if ep.split == "held-out"]
 
-    probe = Probe.fit(
-        np.concatenate([embeddings[i] for i in train]),
-        np.concatenate([episodes[i].object_pos for i in train]),
-    )
+    probe = Probe.fit([embeddings[i] for i in train], [episodes[i].object_pos for i in train])
     probe_pos = [probe.predict(e) for e in held_out_embeddings]
     probe_error = np.mean(np.concatenate([_dist(p, ep.object_pos) for p, ep in zip(probe_pos, held_out)]))
 

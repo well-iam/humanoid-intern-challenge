@@ -57,6 +57,22 @@ def test_probe_recovers_object_position_on_held_out_episodes(toy_episodes):
     assert report.probe_error < 0.04 * toy.WORKSPACE
 
 
+def test_a_loud_channel_that_carries_nothing_does_not_hide_the_object_from_the_probe(toy_episodes):
+    # Real ViTs have a few channels with huge activations. Here one extra channel, the same
+    # in every patch, holds noise 100x louder than the colours that show the object.
+    rng = np.random.default_rng(0)
+    encoder = ToyEncoder()
+    embeddings = []
+    for ep in toy_episodes:
+        e = encoder.encode(ep.frames)
+        loud = 100 * rng.standard_normal((len(e), 1, 1)) * np.ones((1, e.shape[1], 1))
+        embeddings.append(np.concatenate([e, loud.astype(np.float32)], axis=-1))
+
+    report = evaluate(toy_episodes, embeddings, step=toy.STEP, move_threshold=toy.MOVE_THRESHOLD)
+
+    assert report.probe_error < 0.04 * toy.WORKSPACE
+
+
 def test_static_baseline_error_is_zero_where_nothing_moves(toy_episodes):
     # Freeze each held-out toy episode at its first frame, so nothing moves in any window.
     frozen = [frozen_at_first_frame(ep) if ep.split == "held-out" else ep for ep in toy_episodes]
