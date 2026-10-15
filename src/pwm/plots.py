@@ -120,7 +120,7 @@ def _pass_mark(ax, report: Report) -> None:
     mark = (1 - GATE_MARGIN) * min(report.errors[STATIC]["moving"][i], report.errors[BLIND]["moving"][i])
     ax.plot([GATE_HORIZON / 1.15, GATE_HORIZON * 1.15], [mark, mark], color=INK, linewidth=1.5, zorder=4)
     ax.annotate(
-        "pass mark", xy=(GATE_HORIZON * 1.17, mark), va="center", fontsize=8, color=INK_2, annotation_clip=False
+        "pass mark", xy=(GATE_HORIZON * 1.22, mark), va="center", fontsize=8, color=INK_2, annotation_clip=False
     )
 
 
