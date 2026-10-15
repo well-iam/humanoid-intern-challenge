@@ -28,6 +28,8 @@ UNIT = "Push-T units"
 FPS = 10
 T_CENTRE_OFFSET = 45.0  # from the crossbar's outer edge to the centre of the T
 
+GOAL_POSE = (256.0, 256.0, np.pi / 4)  # gym-pusht's goal for the stored block pose (x, y, angle)
+
 STEP = 0.5  # seconds: every 5th frame, so the object visibly moves between steps
 MOVE_THRESHOLD = 5.0  # Push-T units
 N_TRAIN, N_HELD_OUT, SEED = 100, 50, 0
@@ -71,6 +73,11 @@ def block_poses(raw_dir: Path) -> dict[str, np.ndarray]:
     block = group["data/state"][:, 2:5].astype(np.float64)
     poses = np.concatenate([t_centre(block), block[:, 2:3]], axis=1)
     return {f"pusht-{i:03d}": p for i, p in enumerate(np.split(poses, ends[:-1]))}
+
+
+def goal_centre() -> np.ndarray:
+    """Where the centre of the T is when the T sits on Push-T's goal."""
+    return t_centre(np.array([GOAL_POSE]))[0]
 
 
 def t_centre(block: np.ndarray) -> np.ndarray:
