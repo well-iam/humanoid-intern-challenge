@@ -7,6 +7,8 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/episodes/<name>.npz     one file per episode         (make_episodes)
     <root>/<dataset>/<encoder>/embeddings.npy  fp16, all frames in episode-name order  (embed)
     <root>/<dataset>/<encoder>/embeddings.json episode names and frame counts           (embed)
+    <root>/<dataset>/<encoder>/predictor.pt    the trained predictor                  (train)
+    <root>/<dataset>/<encoder>/predictor-blind.pt  the action-blind predictor        (train --blind)
     <root>/<dataset>/<encoder>/results.json    the report, machine-readable           (evaluate)
     <root>/<dataset>/<encoder>/report.md       the report, for people                 (evaluate)
 
@@ -18,12 +20,15 @@ import os
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from pwm.datasets import DATASETS
 from pwm.encoders import get_encoder
 from pwm.episodes import Episode, load_episodes, save_episodes
 from pwm.evaluator import Report
 from pwm.evaluator import evaluate as evaluate_episodes
+from pwm.predictor import Predictor
+from pwm.predictor import train as train_predictor
 
 
 def data_root(root: str | Path | None = None) -> Path:
@@ -72,11 +77,46 @@ def load_embeddings(dataset: str, encoder: str, episodes: list[Episode], root=No
     return views
 
 
+def train(
+    dataset: str,
+    encoder: str,
+    root: str | Path | None = None,
+    blind: bool = False,
+    device: str | None = None,
+    **options,
+) -> None:
+    """Train the predictor (or, with `blind`, the action-blind predictor) on the training episodes.
+
+    `options` go to `pwm.predictor.train` (size, steps, batch_size, lr, precision, ...).
+    """
+    folder = data_root(root) / dataset
+    episodes = load_episodes(folder / "episodes")
+    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    predictor = train_predictor(
+        episodes, embeddings, DATASETS[dataset].step, use_actions=not blind, device=device or _device(), **options
+    )
+    predictor.save(folder / encoder / _predictor_file(blind))
+
+
 def evaluate(dataset: str, encoder: str, root: str | Path | None = None) -> Report:
+    """Score the static baseline and whichever predictors have been trained."""
     folder = data_root(root) / dataset
     episodes = load_episodes(folder / "episodes")
     embeddings = load_embeddings(dataset, encoder, episodes, root)
     spec = DATASETS[dataset]
-    report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold)
+    trained = {}
+    for role, blind in (("predictor", False), ("blind", True)):
+        path = folder / encoder / _predictor_file(blind)
+        if path.exists():
+            trained[role] = Predictor.load(path, _device()).rollout
+    report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
     report.save(folder / encoder, title=f"{dataset}, {encoder} encoder")
     return report
+
+
+def _predictor_file(blind: bool) -> str:
+    return "predictor-blind.pt" if blind else "predictor.pt"
+
+
+def _device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"

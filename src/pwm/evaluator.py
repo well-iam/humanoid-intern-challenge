@@ -10,6 +10,10 @@ A model is a function `rollout(context, pusher_pos, actions) -> predictions`:
 - pusher_pos: (B, C, 2) pusher positions at the context frames;
 - actions: (B, H, 2) pusher actions for the H future steps;
 - predictions: (B, H, patches, dims), the predicted frame embedding after each step.
+
+The wrong-action test rolls the predictor out with reversed actions (each one pointing the
+opposite way) and with shuffled actions (those of another held-out window). The model
+integrates future pusher positions from whatever actions it is given.
 """
 
 import json
@@ -23,11 +27,20 @@ from pwm.probe import Probe
 from pwm.windows import make_windows
 
 HORIZONS = [1, 2, 4, 8]
-BATCH = 256
+BATCH = 32  # windows per rollout call; real predictions are 8 x 256 x 1024 floats per window
 
-# Real future frame embeddings through the probe: the error a perfect predictor would get.
-PROBE_FLOOR = "probe floor"
+# Report rows.
 STATIC = "static baseline"
+PREDICTOR = "predictor"
+BLIND = "action-blind predictor"
+REVERSED = "predictor, reversed actions"
+SHUFFLED = "predictor, shuffled actions"
+PROBE_FLOOR = "probe floor"  # real future frames through the probe: what a perfect predictor would get
+
+# Pass marks, fixed before seeing any results.
+GATE_1_MARK = 0.04  # probe error below 4% of the workspace width
+GATE_HORIZON = 4  # validation gate: at horizon 4, on moving windows,
+GATE_MARGIN = 0.2  # the predictor's error is at least 20% below the better baseline
 
 
 def static_baseline(context, pusher_pos, actions):
@@ -45,27 +58,56 @@ class Report:
     horizons: list[int]
     n_windows: int  # held-out windows
     n_moving: list[int]  # moving windows, per horizon
-    errors: dict[str, dict[str, list[float]]]  # model -> {"moving": [...], "all": [...]}, per horizon
+    errors: dict[str, dict[str, list[float]]]  # row -> {"moving": [...], "all": [...]}, per horizon
+
+    @property
+    def gate_1(self) -> bool:
+        """Gate 1: the probe finds the object in real embeddings."""
+        return self.probe_error < GATE_1_MARK * self.workspace
+
+    @property
+    def validation_gate(self) -> bool | None:
+        """At horizon 4 on moving windows, the predictor's error is at least 20% below the
+        better of the static baseline and the action-blind predictor, and both wrong-action
+        rows raise it. None if the report lacks any of these rows."""
+        rows = (STATIC, PREDICTOR, BLIND, REVERSED, SHUFFLED)
+        if GATE_HORIZON not in self.horizons or any(row not in self.errors for row in rows):
+            return None
+        i = self.horizons.index(GATE_HORIZON)
+        e = {row: self.errors[row]["moving"][i] for row in rows}
+        beats_baselines = e[PREDICTOR] <= (1 - GATE_MARGIN) * min(e[STATIC], e[BLIND])
+        return bool(beats_baselines and e[REVERSED] > e[PREDICTOR] and e[SHUFFLED] > e[PREDICTOR])
 
     def save(self, folder: Path, title: str) -> None:
-        """Write results.json and report.md into `folder`."""
+        """Write results.json (with the gate flags) and report.md into `folder`."""
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "results.json").write_text(json.dumps(asdict(self), indent=2))
+        results = {**asdict(self), "gate_1": self.gate_1, "validation_gate": self.validation_gate}
+        (folder / "results.json").write_text(json.dumps(results, indent=2))
         (folder / "report.md").write_text(self.to_markdown(title))
 
     @classmethod
     def load(cls, folder: Path) -> "Report":
-        return cls(**json.loads((folder / "results.json").read_text()))
+        results = json.loads((folder / "results.json").read_text())
+        results.pop("gate_1", None), results.pop("validation_gate", None)
+        return cls(**results)
 
     def to_markdown(self, title: str) -> str:
         def row(cells):
             return "| " + " | ".join(cells) + " |"
+
+        def verdict(flag):
+            return {True: "**pass**", False: "**fail**", None: "not run (needs both predictors)"}[flag]
 
         lines = [
             f"# Results: {title}",
             "",
             f"Probe error on held-out real frames: {self.probe_error:.2f} {self.unit} "
             f"({100 * self.probe_error / self.workspace:.1f}% of the workspace width, {self.workspace:g}).",
+            "",
+            f"- Gate 1 (probe error under {100 * GATE_1_MARK:g}% of the workspace width): {verdict(self.gate_1)}",
+            f"- Validation gate (at horizon {GATE_HORIZON} on moving windows, the predictor's error is at least "
+            f"{100 * GATE_MARGIN:g}% below the better baseline, and both wrong-action rows raise it): "
+            f"{verdict(self.validation_gate)}",
             "",
             f"Object position error in {self.unit}, mean over held-out windows, by horizon "
             f"(one step = {self.step:g} s). Moving windows: the object moves more than "
@@ -87,16 +129,18 @@ def evaluate(
     embeddings: list[np.ndarray],
     step: float,
     move_threshold: float,
-    models: dict | None = None,
+    predictor=None,
+    blind=None,
     horizons: list[int] = HORIZONS,
+    seed: int = 0,
 ) -> Report:
     """`embeddings[i]` holds the frame embeddings of `episodes[i]`, shape (T, patches, dims).
 
-    `models` maps a name to a rollout function; the static baseline is always included.
+    `predictor` and `blind` (the action-blind predictor) are rollout functions; the static
+    baseline is always included, and the wrong-action test runs whenever `predictor` is given.
     `move_threshold` is in table units: a window is moving at horizon h if the object moves
     further than this from its current position within h steps.
     """
-    models = {STATIC: static_baseline, **(models or {})}
     train = [i for i, ep in enumerate(episodes) if ep.split == "train"]
     held_out = [ep for ep in episodes if ep.split == "held-out"]
     held_out_embeddings = [embeddings[i] for i, ep in enumerate(episodes) if ep.split == "held-out"]
@@ -114,14 +158,23 @@ def evaluate(
     moved = _dist(future, now)  # (N, H)
     moving = [moved[:, :h].max(axis=1) > move_threshold for h in horizons]
 
-    per_window = {}
     actions = windows.actions[:, c - 1 :]
-    for name, rollout in models.items():
+    runs = {STATIC: (static_baseline, actions)}
+    if predictor is not None:
+        runs[PREDICTOR] = (predictor, actions)
+    if blind is not None:
+        runs[BLIND] = (blind, actions)
+    if predictor is not None:
+        runs[REVERSED] = (predictor, -actions)
+        runs[SHUFFLED] = (predictor, actions[np.random.default_rng(seed).permutation(len(actions))])
+
+    per_window = {}
+    for name, (rollout, run_actions) in runs.items():
         errors = []
         for b in range(0, len(windows), BATCH):
             rows = slice(b, b + BATCH)
             predicted = rollout(
-                windows.gather(held_out_embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], actions[rows]
+                windows.gather(held_out_embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], run_actions[rows]
             )
             n, steps = predicted.shape[:2]
             predicted_pos = probe.predict(predicted.reshape(n * steps, *predicted.shape[2:])).reshape(n, steps, 2)
