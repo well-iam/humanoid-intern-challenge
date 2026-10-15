@@ -14,6 +14,8 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/seed-<n>/       predictor.pt, predictor-blind.pt, results.json and
                                                report.md of a run trained with seed n (train and
                                                evaluate with seed=n; seed 0 is the encoder folder)
+    <root>/<dataset>/<encoder>/seeds.md        the runs of several seeds side by side  (seeds)
+    <root>/<dataset>/<encoder>/error-vs-horizon-seeds.png  the same, plotted          (seeds)
     <root>/<dataset>/error-vs-horizon.png      every evaluated encoder, one row each  (compare)
     <root>/<dataset>/winner.json               the winning encoder and why            (compare)
 
@@ -30,9 +32,17 @@ import torch
 from pwm.datasets import DATASETS
 from pwm.encoders import get_encoder
 from pwm.episodes import Episode, load_episodes, save_episodes
-from pwm.evaluator import GATE_HORIZON, HORIZONS, PREDICTOR, Report, nearest_frames, winning_encoder
+from pwm.evaluator import (
+    GATE_HORIZON,
+    HORIZONS,
+    PREDICTOR,
+    Report,
+    nearest_frames,
+    seeds_to_markdown,
+    winning_encoder,
+)
 from pwm.evaluator import evaluate as evaluate_episodes
-from pwm.plots import plot_errors, save_retrievals
+from pwm.plots import plot_errors, plot_seeds, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
 from pwm.windows import make_windows
@@ -145,6 +155,17 @@ def compare(dataset: str, root: str | Path | None = None) -> str:
         )
     )
     return winner
+
+
+def seeds(dataset: str, encoder: str, seeds: list[int], root: str | Path | None = None) -> Path:
+    """Compare the evaluated runs of one encoder trained with different seeds: write their
+    gate verdicts and error spread to seeds.md, and plot it. Returns the path of seeds.md."""
+    folder = data_root(root) / dataset / encoder
+    reports = {seed: Report.load(run_folder(dataset, encoder, root, seed)) for seed in seeds}
+    plot_seeds(reports, encoder, folder / "error-vs-horizon-seeds.png")
+    path = folder / "seeds.md"
+    path.write_text(seeds_to_markdown(reports, f"{dataset}, {encoder} encoder"), encoding="utf-8")
+    return path
 
 
 def retrievals(dataset: str, encoder: str, root: str | Path | None = None, n_rollouts: int = 3, seed: int = 0) -> Path:

@@ -125,6 +125,70 @@ class Report:
         return "\n".join(lines) + "\n"
 
 
+def seeds_to_markdown(reports: dict[int, Report], title: str) -> str:
+    """The runs of one encoder trained with different seeds (`reports` maps seed -> report),
+    side by side: each seed's validation gate, then every row by horizon, with the mean and
+    the sample standard deviation over seeds. A row that is the same for every seed (the
+    static baseline, the probe floor) is given once."""
+    runs = list(reports.values())
+    gate_rows = (PREDICTOR, BLIND, STATIC, REVERSED, SHUFFLED)
+
+    def row(cells):
+        return "| " + " | ".join(cells) + " |"
+
+    def spread(values):
+        if len(values) < 2:
+            return f"{values[0]:.2f}"
+        return f"{np.mean(values):.2f} ± {np.std(values, ddof=1):.2f}"
+
+    def mark(report):
+        return (1 - GATE_MARGIN) * min(_at_gate(report, STATIC), _at_gate(report, BLIND))
+
+    passes = sum(bool(r.validation_gate) for r in runs)
+    lines = [
+        f"# Seeds: {title}",
+        "",
+        f"The same recipe trained with seeds {', '.join(map(str, reports))} (initial weights and batches), each "
+        "predictor with the action-blind predictor of its own seed, all evaluated on the same held-out windows. "
+        "Mean ± sample standard deviation over seeds.",
+        "",
+        f"## Validation gate (horizon {GATE_HORIZON}, moving windows)",
+        "",
+        f"Pass mark = {1 - GATE_MARGIN:g} x the better baseline of the same seed. "
+        f"Margin = pass mark - predictor (positive passes). Passes in {passes} of {len(runs)} seeds.",
+        "",
+        row(["", "predictor", "action-blind", "static", "reversed", "shuffled", "pass mark", "margin", "gate"]),
+        row(["---"] + ["---:"] * 8),
+    ]
+    for seed, r in reports.items():
+        verdict = {True: "pass", False: "fail", None: "not run"}[r.validation_gate]
+        values = [_at_gate(r, name) for name in gate_rows] + [mark(r), mark(r) - _at_gate(r, PREDICTOR)]
+        lines.append(row([f"seed {seed}"] + [f"{v:.2f}" for v in values] + [verdict]))
+    columns = [[_at_gate(r, name) for r in runs] for name in gate_rows]
+    columns += [[mark(r) for r in runs], [mark(r) - _at_gate(r, PREDICTOR) for r in runs]]
+    lines.append(row(["mean ± std"] + [spread(c) for c in columns] + [f"{passes} of {len(runs)}"]))
+
+    horizons = runs[0].horizons
+    for subset in ("moving", "all"):
+        lines += [
+            "",
+            f"## Error by horizon, {subset} windows",
+            "",
+            row([""] + [f"{h} step{'s' if h > 1 else ''}" for h in horizons]),
+            row(["---"] + ["---:"] * len(horizons)),
+        ]
+        for name in runs[0].errors:
+            per_seed = [[f"{e:.2f}" for e in r.errors[name][subset]] for r in runs]
+            if all(cells == per_seed[0] for cells in per_seed):
+                lines.append(row([f"{name}, every seed"] + per_seed[0]))
+                continue
+            for seed, cells in zip(reports, per_seed):
+                lines.append(row([f"{name}, seed {seed}"] + cells))
+            values = np.array([r.errors[name][subset] for r in runs])
+            lines.append(row([f"**{name}, mean ± std**"] + [spread(values[:, i]) for i in range(len(horizons))]))
+    return "\n".join(lines) + "\n"
+
+
 def winning_encoder(reports: dict[str, Report]) -> str:
     """The encoder whose predictor has the lowest held-out error at the validation gate's
     horizon on moving windows. `reports` maps encoder name -> its report."""

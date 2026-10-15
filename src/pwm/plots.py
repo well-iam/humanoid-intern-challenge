@@ -1,5 +1,6 @@
 """Figures of the results report: object position error against horizon, and retrievals."""
 
+import dataclasses
 from pathlib import Path
 
 import matplotlib
@@ -45,32 +46,74 @@ PANELS = [
 def plot_errors(reports: dict[str, Report], path: Path) -> None:
     """One row per encoder: error vs horizon on moving windows, on all windows, and with
     wrong actions. All panels share the error axis so encoders compare at a glance."""
-    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
-    fig = plt.figure(figsize=(11, 3.4 * len(reports) + 0.6), layout="constrained", facecolor=SURFACE)
+    fig = _figure(len(reports))
     first = None
     for subfig, (encoder, report) in zip(np.atleast_1d(fig.subfigures(len(reports), 1)), reports.items()):
-        subfig.set_facecolor(SURFACE)
         verdict = {True: "passes", False: "fails", None: "not run"}[report.validation_gate]
-        subfig.suptitle(f"{ENCODER_NAMES.get(encoder, encoder)}: validation gate {verdict}", x=0.01, ha="left",
-                        fontsize=11, fontweight="bold", color=INK)
-        axes = subfig.subplots(1, len(PANELS))
-        for column, (ax, (title, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
-            if first is None:
-                first = ax
-            else:
-                ax.sharey(first)
-            _style(ax, report)
-            ax.tick_params(labelleft=column == 0)
-            ax.set_title(title, color=INK_2, fontsize=9, loc="left")
-            for name in names:
-                if name in report.errors:
-                    _line(ax, report, name, subset)
-            if pass_mark and BLIND in report.errors:
-                _pass_mark(ax, report)
-            ax.set_xlabel(f"horizon (steps of {report.step:g} s)", color=INK_2)
-        axes[0].set_ylabel(f"object position error ({report.unit})", color=INK_2)
+        first = _row(subfig, report, f"{ENCODER_NAMES.get(encoder, encoder)}: validation gate {verdict}", first)
     first.set_ylim(bottom=0)
+    _legend_and_save(fig, path)
 
+
+def plot_seeds(reports: dict[int, Report], encoder: str, path: Path) -> None:
+    """The runs of one encoder trained with different seeds (`reports` maps seed -> report),
+    drawn as plot_errors draws one encoder: each line is the mean over seeds, its band spans
+    the lowest to the highest seed, and the pass mark is the mean of the seeds' pass marks."""
+    runs = list(reports.values())
+    mean = dataclasses.replace(
+        runs[0],
+        errors={
+            name: {subset: list(np.mean([r.errors[name][subset] for r in runs], axis=0)) for subset in ("moving", "all")}
+            for name in runs[0].errors
+        },
+    )
+    spread = {
+        (name, subset): (np.min(values, axis=0), np.max(values, axis=0))
+        for name in runs[0].errors
+        for subset in ("moving", "all")
+        for values in [[r.errors[name][subset] for r in runs]]
+    }
+    passes = sum(bool(r.validation_gate) for r in runs)
+    fig = _figure(1)
+    title = (f"{ENCODER_NAMES.get(encoder, encoder)}, {len(runs)} seeds: validation gate passes in {passes} of "
+             f"{len(runs)}. Lines: mean over seeds; bands: lowest to highest seed")
+    _row(fig.subfigures(1, 1), mean, title, None, spread, pass_marks=[_pass_mark_of(r) for r in runs]).set_ylim(bottom=0)
+    _legend_and_save(fig, path)
+
+
+def _figure(rows: int):
+    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
+    return plt.figure(figsize=(11, 3.4 * rows + 0.6), layout="constrained", facecolor=SURFACE)
+
+
+def _row(subfig, report: Report, title: str, first, spread=None, pass_marks=None):
+    """Draw the panels of one report into `subfig`, sharing the error axis with `first` (the
+    first panel drawn so far, or None). Returns the first panel."""
+    subfig.set_facecolor(SURFACE)
+    subfig.suptitle(title, x=0.01, ha="left", fontsize=11, fontweight="bold", color=INK)
+    axes = subfig.subplots(1, len(PANELS))
+    for column, (ax, (panel, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
+        if first is None:
+            first = ax
+        else:
+            ax.sharey(first)
+        _style(ax, report)
+        ax.tick_params(labelleft=column == 0)
+        ax.set_title(panel, color=INK_2, fontsize=9, loc="left")
+        for name in names:
+            if name in report.errors:
+                _line(ax, report, name, subset)
+                if spread and name != PROBE_FLOOR:
+                    ax.fill_between(report.horizons, *spread[name, subset], color=COLOURS[name], alpha=0.18,
+                                    linewidth=0, zorder=1)
+        if pass_mark and BLIND in report.errors:
+            _pass_mark(ax, np.mean(pass_marks) if pass_marks else _pass_mark_of(report))
+        ax.set_xlabel(f"horizon (steps of {report.step:g} s)", color=INK_2)
+    axes[0].set_ylabel(f"object position error ({report.unit})", color=INK_2)
+    return first
+
+
+def _legend_and_save(fig, path: Path) -> None:
     handles = {}
     for ax in fig.get_axes():
         for h, label in zip(*ax.get_legend_handles_labels()):
@@ -115,10 +158,14 @@ def _line(ax, report: Report, name: str, subset: str) -> None:
     )
 
 
-def _pass_mark(ax, report: Report) -> None:
-    """The validation gate's pass mark at its horizon: 20% below the better baseline."""
+def _pass_mark_of(report: Report) -> float:
+    """The validation gate's pass mark: 20% below the better baseline at the gate's horizon."""
     i = report.horizons.index(GATE_HORIZON)
-    mark = (1 - GATE_MARGIN) * min(report.errors[STATIC]["moving"][i], report.errors[BLIND]["moving"][i])
+    return (1 - GATE_MARGIN) * min(report.errors[STATIC]["moving"][i], report.errors[BLIND]["moving"][i])
+
+
+def _pass_mark(ax, mark: float) -> None:
+    """Mark the validation gate's pass mark at its horizon."""
     ax.plot([GATE_HORIZON / 1.15, GATE_HORIZON * 1.15], [mark, mark], color=INK, linewidth=1.5, zorder=4)
     ax.annotate(
         "pass mark", xy=(GATE_HORIZON * 1.22, mark), va="center", fontsize=8, color=INK_2, annotation_clip=False

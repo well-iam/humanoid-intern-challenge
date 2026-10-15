@@ -61,6 +61,26 @@ def test_a_run_trained_with_another_seed_lives_in_its_own_folder_and_leaves_the_
     assert stages.compare("toy", root=tmp_path) == "toy"  # a seed run is not mistaken for an encoder
 
 
+def test_the_seed_summary_gives_each_seeds_gate_verdict_and_plots_the_spread(tmp_path):
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    for seed in (0, 1):
+        stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3, seed=seed)
+        stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3, seed=seed)
+        stages.evaluate("toy", "toy", root=tmp_path, seed=seed)
+
+    summary = stages.seeds("toy", "toy", [0, 1], root=tmp_path)
+
+    folder = tmp_path / "toy" / "toy"
+    assert summary == folder / "seeds.md"
+    lines = summary.read_text().splitlines()
+    for seed in (0, 1):
+        passed = json.loads((stages.run_folder("toy", "toy", tmp_path, seed) / "results.json").read_text())["validation_gate"]
+        gate_line = next(line for line in lines if line.startswith(f"| seed {seed} |"))
+        assert gate_line.rstrip(" |").endswith("pass" if passed else "fail")
+    assert (folder / "error-vs-horizon-seeds.png").read_bytes().startswith(b"\x89PNG")
+
+
 def test_comparing_encoders_picks_the_one_that_predicts_the_object_better_and_plots_both(tmp_path, monkeypatch):
     class BlurryEncoder(ToyEncoder):
         """The toy encoder with noise on top: it shows the object less clearly."""
