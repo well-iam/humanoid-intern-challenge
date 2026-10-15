@@ -32,6 +32,7 @@ LABELS = {
     SHUFFLED: "predictor, shuffled actions",
     PROBE_FLOOR: "probe floor (real future frame)",
 }
+ENCODER_NAMES = {"dinov2": "DINOv2-small", "vjepa2": "V-JEPA 2 ViT-L"}  # for titles; others as named
 LEGEND_ORDER = [PREDICTOR, BLIND, STATIC, REVERSED, SHUFFLED, PROBE_FLOOR]
 # (title, window subset, rows, whether to mark the validation gate's pass mark)
 PANELS = [
@@ -50,8 +51,8 @@ def plot_errors(reports: dict[str, Report], path: Path) -> None:
     for subfig, (encoder, report) in zip(np.atleast_1d(fig.subfigures(len(reports), 1)), reports.items()):
         subfig.set_facecolor(SURFACE)
         verdict = {True: "passes", False: "fails", None: "not run"}[report.validation_gate]
-        subfig.suptitle(f"{encoder}: validation gate {verdict}", x=0.01, ha="left", fontsize=11,
-                        fontweight="semibold", color=INK)
+        subfig.suptitle(f"{ENCODER_NAMES.get(encoder, encoder)}: validation gate {verdict}", x=0.01, ha="left",
+                        fontsize=11, fontweight="bold", color=INK)
         axes = subfig.subplots(1, len(PANELS))
         for column, (ax, (title, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
             if first is None:
