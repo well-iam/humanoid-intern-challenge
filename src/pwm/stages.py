@@ -14,6 +14,7 @@ writes its outputs there, so any stage can be rerun on its own:
 The root is the `root` argument, else the PWM_DATA environment variable, else ./data.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -23,10 +24,12 @@ import torch
 from pwm.datasets import DATASETS
 from pwm.encoders import get_encoder
 from pwm.episodes import Episode, load_episodes, save_episodes
-from pwm.evaluator import Report
+from pwm.evaluator import GATE_HORIZON, HORIZONS, PREDICTOR, Report, nearest_frames, winning_encoder
 from pwm.evaluator import evaluate as evaluate_episodes
+from pwm.plots import plot_errors, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
+from pwm.windows import make_windows
 
 
 def data_root(root: str | Path | None = None) -> Path:
@@ -101,6 +104,88 @@ def evaluate(dataset: str, encoder: str, root: str | Path | None = None) -> Repo
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
     report.save(folder / encoder, title=f"{dataset}, {encoder} encoder")
     return report
+
+
+def compare(dataset: str, root: str | Path | None = None) -> str:
+    """Compare the encoders whose predictors have been evaluated: plot error vs horizon for
+    each, pick the winning encoder and write it to winner.json. Returns the winner."""
+    folder = data_root(root) / dataset
+    reports = {}
+    for results in sorted(folder.glob("*/results.json")):
+        report = Report.load(results.parent)
+        if PREDICTOR in report.errors:
+            reports[results.parent.name] = report
+    assert reports, f"no evaluated predictor under {folder}"
+    winner = winning_encoder(reports)
+    plot_errors(reports, folder / "error-vs-horizon.png")
+    at_gate = {name: r.errors[PREDICTOR]["moving"][r.horizons.index(GATE_HORIZON)] for name, r in reports.items()}
+    (folder / "winner.json").write_text(
+        json.dumps(
+            {
+                "encoder": winner,
+                "rule": f"lowest predictor error at horizon {GATE_HORIZON} on held-out moving windows",
+                "predictor_error": at_gate,
+                "validation_gate": {name: r.validation_gate for name, r in reports.items()},
+            },
+            indent=2,
+        )
+    )
+    return winner
+
+
+def retrievals(dataset: str, encoder: str, root: str | Path | None = None, n_rollouts: int = 3, seed: int = 0) -> Path:
+    """Nearest-real-frame retrievals for a few held-out rollouts, drawn into retrievals.png.
+
+    The rollouts start from held-out windows picked at random (by `seed`) among those where
+    the object moves within the gate's horizon. Each prediction is shown as the training
+    frame whose embedding is nearest to it, next to the true frame, with how far the object
+    in the retrieved frame is from the true object position.
+    """
+    folder = data_root(root) / dataset
+    episodes = load_episodes(folder / "episodes")
+    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    spec = DATASETS[dataset]
+    train_set = [(ep, e) for ep, e in zip(episodes, embeddings) if ep.split == "train"]
+    held_out = [(ep, e) for ep, e in zip(episodes, embeddings) if ep.split == "held-out"]
+    held_episodes, held_embeddings = [ep for ep, _ in held_out], [e for _, e in held_out]
+
+    windows = make_windows(held_episodes, spec.step, future=max(HORIZONS))
+    c = windows.context
+    moved = np.linalg.norm(windows.object_pos[:, c : c + GATE_HORIZON] - windows.object_pos[:, c - 1 : c], axis=-1)
+    moving = np.flatnonzero(moved.max(axis=1) > spec.move_threshold)
+    picked = np.sort(np.random.default_rng(seed).choice(moving, min(n_rollouts, len(moving)), replace=False))
+    columns = [c + h - 1 for h in HORIZONS]  # window positions of the frames at each horizon
+
+    models = {}
+    for label, blind in (("predictor", False), ("action-blind", True)):
+        path = folder / encoder / _predictor_file(blind)
+        if path.exists():
+            models[label] = Predictor.load(path, _device())
+
+    rows = []
+    for w in picked:
+        ep = held_episodes[windows.episode[w]]
+        frames = windows.frames[w]
+        rows.append(
+            {"label": f"{ep.name}\ntrue", "frames": [ep.frames[frames[c - 1]]] + [ep.frames[frames[k]] for k in columns],
+             "notes": [""] * (1 + len(HORIZONS))}
+        )
+        for label, model in models.items():
+            predicted = model.rollout(
+                windows.gather(held_embeddings, [w], slice(None, c)), windows.pusher_pos[[w], :c], windows.actions[[w], c - 1 :]
+            )[0]
+            found = nearest_frames(predicted[[h - 1 for h in HORIZONS]], [e for _, e in train_set],
+                                   std=model.emb_std.cpu().numpy())
+            images, notes = [None], [""]
+            for (e, f), k in zip(found, columns):
+                images.append(train_set[e][0].frames[f])
+                off = np.linalg.norm(train_set[e][0].object_pos[f] - windows.object_pos[w, k])
+                notes.append(f"object off by {off:.0f}")
+            rows.append({"label": f"{label}\n(nearest)", "frames": images, "notes": notes})
+
+    path = folder / encoder / "retrievals.png"
+    save_retrievals(rows, HORIZONS, path, held_episodes[0].unit)
+    return path
 
 
 def _predictor_file(blind: bool) -> str:

@@ -16,6 +16,10 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   tqdm
     #   typer
+contourpy==1.4.0
+    # via matplotlib
+cycler==0.12.1
+    # via matplotlib
 daqp==0.10.3
     # via qpsolvers
 donfig==0.8.1.post1
@@ -26,6 +30,8 @@ farama-notifications==0.0.6
     # via gymnasium
 filelock==4.2.0
     # via huggingface-hub
+fonttools==4.67.0
+    # via matplotlib
 fsspec==2026.9.0
     # via
     #   etils
@@ -58,8 +64,12 @@ idna==3.20
     #   httpx2
 imageio==2.38.1
     # via pushing-world-model
+kiwisolver==1.5.1
+    # via matplotlib
 markdown-it-py==4.2.0
     # via rich
+matplotlib==3.11.2
+    # via pushing-world-model
 mdurl==0.1.2
     # via markdown-it-py
 mink==1.3.0
@@ -74,8 +84,10 @@ numcodecs==0.17.0
     # via zarr
 numpy==2.5.4
     # via
+    #   contourpy
     #   gymnasium
     #   imageio
+    #   matplotlib
     #   mujoco
     #   numcodecs
     #   opencv-python
@@ -90,11 +102,13 @@ opencv-python==4.14.0.94
 packaging==26.3
     # via
     #   huggingface-hub
+    #   matplotlib
     #   transformers
     #   zarr
 pillow==12.3.0
     # via
     #   imageio
+    #   matplotlib
     #   pushing-world-model
 pycparser==3.11 ; implementation_name != 'PyPy'
     # via cffi
@@ -106,6 +120,10 @@ pymunk==6.11.1
     # via gym-pusht
 pyopengl==3.1.10
     # via mujoco
+pyparsing==3.3.3
+    # via matplotlib
+python-dateutil==2.9.0.post0
+    # via matplotlib
 pyyaml==6.0.3
     # via
     #   donfig
@@ -125,6 +143,8 @@ shapely==2.2.0
     # via gym-pusht
 shellingham==1.5.4
     # via typer
+six==1.17.0
+    # via python-dateutil
 tokenizers==0.23.3
     # via transformers
 tqdm==4.70.1

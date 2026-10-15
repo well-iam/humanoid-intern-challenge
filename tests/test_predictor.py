@@ -7,7 +7,17 @@ import torch
 
 from pwm.datasets import toy
 from pwm.encoders.toy import ToyEncoder
-from pwm.evaluator import BLIND, PREDICTOR, PROBE_FLOOR, REVERSED, SHUFFLED, STATIC, Report, evaluate
+from pwm.evaluator import (
+    BLIND,
+    PREDICTOR,
+    PROBE_FLOOR,
+    REVERSED,
+    SHUFFLED,
+    STATIC,
+    Report,
+    evaluate,
+    winning_encoder,
+)
 from pwm.predictor import train
 
 ENCODER = ToyEncoder()
@@ -119,3 +129,11 @@ def test_validation_gate_follows_the_fixed_pass_mark(errors, passes):
 
 def test_validation_gate_is_not_reported_without_a_predictor():
     assert hand_made_report(static=10).validation_gate is None
+
+
+def test_the_winning_encoder_has_the_lower_predictor_error_at_horizon_4_on_moving_windows():
+    reports = {
+        "dinov2": hand_made_report(static=40, blind=30, predictor=20, reversed=25, shuffled=25),
+        "vjepa2": hand_made_report(static=50, blind=45, predictor=15, reversed=25, shuffled=25),
+    }
+    assert winning_encoder(reports) == "vjepa2"

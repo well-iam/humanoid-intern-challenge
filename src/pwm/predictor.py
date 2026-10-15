@@ -100,7 +100,14 @@ class Predictor(nn.Module):
 
         Each prediction is fed back as context. Future pusher positions are integrated from
         the given actions, so they stay consistent with them even when the actions are wrong.
+        On a GPU the transformer runs in fp16 autocast, as in training (about 3x faster);
+        the residual sum and the outputs stay fp32.
         """
+        device = self.emb_mean.device
+        with torch.autocast("cuda", dtype=torch.float16, enabled=device.type == "cuda"):
+            return self._rollout(context, pusher_pos, actions, chunk)
+
+    def _rollout(self, context: np.ndarray, pusher_pos: np.ndarray, actions: np.ndarray, chunk: int) -> np.ndarray:
         device = self.emb_mean.device
         out = []
         for i in range(0, len(context), chunk):

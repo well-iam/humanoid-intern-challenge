@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from pwm.episodes import Episode
 from pwm.probe import Probe
@@ -122,6 +123,42 @@ class Report:
             for subset in ("moving", "all"):
                 lines.append(row([f"{name}, {subset}"] + [f"{e:.2f}" for e in err[subset]]))
         return "\n".join(lines) + "\n"
+
+
+def winning_encoder(reports: dict[str, Report]) -> str:
+    """The encoder whose predictor has the lowest held-out error at the validation gate's
+    horizon on moving windows. `reports` maps encoder name -> its report."""
+    return min(reports, key=lambda name: _at_gate(reports[name], PREDICTOR))
+
+
+def _at_gate(report: Report, row: str) -> float:
+    return report.errors[row]["moving"][report.horizons.index(GATE_HORIZON)]
+
+
+def nearest_frames(
+    queries: np.ndarray, bank: list[np.ndarray], std: np.ndarray | None = None, chunk: int = 128
+) -> list[tuple[int, int]]:
+    """For each query frame embedding (Q, patches, dims), the (episode, frame) of the closest
+    real frame embedding in `bank` (one (T, patches, dims) array per episode), by Euclidean
+    distance over the whole patch grid. Predictions are never decoded to pixels; the nearest
+    real frame shows what a predicted embedding looks like.
+
+    `std` (dims,) divides each channel first, e.g. the predictor's standardisation, so the
+    distance is measured where the predictor was trained. The bank can be memory-mapped.
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    scale = torch.as_tensor(1.0 if std is None else 1.0 / np.asarray(std), dtype=torch.float32, device=device)
+    q = (torch.as_tensor(np.asarray(queries), dtype=torch.float32, device=device) * scale).flatten(1)
+    best = torch.full((len(q),), torch.inf, device=device)
+    found = torch.zeros((len(q), 2), dtype=torch.long, device=device)
+    for e, embeddings in enumerate(bank):
+        for start in range(0, len(embeddings), chunk):
+            b = torch.as_tensor(np.asarray(embeddings[start : start + chunk]), dtype=torch.float32, device=device)
+            distance, frame = torch.cdist(q, (b * scale).flatten(1)).min(dim=1)
+            closer = distance < best
+            best = torch.where(closer, distance, best)
+            found[closer] = torch.stack([torch.full_like(frame, e), frame + start], dim=1)[closer]
+    return [(int(e), int(f)) for e, f in found.cpu()]
 
 
 def evaluate(
