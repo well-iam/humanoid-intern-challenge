@@ -41,7 +41,7 @@ WORKSPACE_METRES = 0.5  # width of the Push-T workspace on the simulated table
 METRES_PER_UNIT = {"cm": 0.01}  # Push-T units: WORKSPACE_METRES / workspace
 TIP_HEIGHT = 0.015  # m, fingertips above the table
 FINGERTIP_DEPTH = 0.113  # m, from the hand frame's origin down to the closed fingertips
-HAND_DOWN = np.array([0.0, 1.0, 1.0, 0.0]) / np.sqrt(2)  # hand pointing down, fingers along world y
+HAND_DOWN = np.array([0.0, 1.0, 1.0, 0.0]) / np.sqrt(2)  # hand pointing down, fingers closing along world x
 T_HEIGHT = 0.03  # m, height of the simulated Push-T T
 DENSITY = 500.0  # kg/m3, a light block: 6 x 8 x 3 cm weighs 72 g
 CONTROL_HZ = 100
@@ -97,20 +97,21 @@ class PandaReplay:
             if renderer:
                 renderer.update_scene(data, camera=self.camera)
                 if self.camera == "top":
-                    _ghost_arm(renderer.scene, model)
+                    _top_view(renderer.scene, model)
                 frames.append(renderer.render().copy())
         if renderer:
             renderer.close()
 
         poses = np.array(poses)
-        poses[:, 2] = push.start[2] + np.unwrap(poses[:, 2] - push.start[2])
+        turn = np.unwrap(poses[:, 2] - push.start[2])  # continuous, and starting at the start angle
+        poses[:, 2] = push.start[2] + turn - 2 * np.pi * np.round(turn[0] / (2 * np.pi))
         return Replayed(final=poses[-1], poses=poses, pusher=np.array(pusher),
                         frames=np.array(frames) if frame_size else None)
 
     def _scene(self, push: Push, table: "_Table", frame_size: int | None) -> mujoco.MjModel:
         spec = mujoco.MjSpec.from_file(str(self.xml))
         hand = spec.body("hand")
-        hand.add_site(name="pusher", pos=[0, 0, FINGERTIP_DEPTH], size=[0.005, 0, 0], rgba=[1, 0, 0, 1])
+        hand.add_site(name="pusher", pos=[0, 0, FINGERTIP_DEPTH], size=[0.006, 0, 0], rgba=[0.25, 0.41, 0.88, 1])
         if self.floating:
             spec = _floating_hand(spec)
         else:
@@ -124,9 +125,20 @@ class PandaReplay:
         spec.visual.headlight.diffuse = [0.15] * 3
         world.add_light(pos=[REACH, 0, 2], dir=[0, 0, -1], diffuse=[0.45] * 3, specular=[0.05] * 3)
         world.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.5, 1.5, 0.01], rgba=[1.0, 1.0, 0.97, 1])
+        for side in range(4):  # the workspace's edge, drawn on the table (no collisions)
+            along, across = (0, 1) if side < 2 else (1, 0)
+            pos = [REACH, 0, 0.0005]
+            pos[across] += (1 if side % 2 else -1) * table.half_width
+            size = [0, 0, 0.0005]
+            size[along], size[across] = table.half_width + 0.002, 0.002
+            world.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, pos=pos, size=size, contype=0, conaffinity=0,
+                           rgba=[0.75, 0.75, 0.72, 1])
         fovy = 2 * np.degrees(np.arctan(table.half_width / CAMERA_HEIGHT))
         world.add_camera(name="top", pos=[REACH, 0, CAMERA_HEIGHT], xyaxes=[0, -1, 0, 1, 0, 0], fovy=fovy)
-        world.add_camera(name="side", pos=[REACH + 0.75, -0.75, 0.7], xyaxes=_look_at([REACH + 0.75, -0.75, 0.7], [REACH - 0.1, 0, 0.1]), fovy=45)
+        eye = [REACH + 0.85, -0.6, 0.6]
+        world.add_camera(name="side", pos=eye, xyaxes=_look_at(eye, [REACH, 0, 0.1]), fovy=42)
+        spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX, builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+                         rgb1=[0.95, 0.95, 0.95], rgb2=[0.8, 0.8, 0.8], width=64, height=64)
 
         body = world.add_body(name="object")
         body.add_freejoint()
@@ -196,11 +208,17 @@ def _floating_hand(panda: mujoco.MjSpec) -> mujoco.MjSpec:
     return spec
 
 
-def _ghost_arm(scene: mujoco.MjvScene, model: mujoco.MjModel) -> None:
-    """Draw the arm's links see-through in the top view, so they do not hide the object."""
+def _top_view(scene: mujoco.MjvScene, model: mujoco.MjModel) -> None:
+    """The top view shows the table as Push-T does: the arm's links hidden, the hand see-through
+    so the object stays visible under it, and no shadows."""
+    scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
     for geom in scene.geoms[: scene.ngeom]:
-        if geom.objtype == mujoco.mjtObj.mjOBJ_GEOM and model.body(model.geom_bodyid[geom.objid]).name.startswith("link"):
-            geom.rgba[3] = 0.15
+        if geom.objtype == mujoco.mjtObj.mjOBJ_GEOM:
+            body = model.body(model.geom_bodyid[geom.objid]).name
+            if body.startswith("link"):
+                geom.rgba[3] = 0.0
+            elif body in ("hand", "left_finger", "right_finger"):
+                geom.rgba[3] = 0.3
 
 
 def _look_at(eye, target) -> list[float]:

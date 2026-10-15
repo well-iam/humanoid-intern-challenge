@@ -52,9 +52,11 @@ def test_a_straight_push_moves_the_box_in_the_push_direction(floating):
     assert np.linalg.norm(result.pusher - path, axis=1).max() < 1.0  # it still follows while pushing
 
 
-def test_an_untouched_t_stays_put_and_is_drawn_where_push_t_draws_it():
-    # Same start as the Push-T judge's test: the pusher runs along the top wall, far from the T.
-    start = np.array([300.0, 250.0, 0.7])
+@pytest.mark.parametrize("angle", [0.7, 3.76, -2.0])
+def test_an_untouched_t_stays_put_and_is_drawn_where_push_t_draws_it(angle):
+    # As in the Push-T judge's test: the pusher runs along the top wall, far from the T.
+    # Angles are not wrapped: a T that starts at 3.76 rad stays at 3.76, not -2.52.
+    start = np.array([300.0, 250.0, angle])
     path = np.stack([np.linspace(40, 470, 21), np.full(21, 40.0)], axis=1)
     push = Push(path=path, timestamps=np.arange(21) * 0.1, start=start, shape="T", unit="Push-T units")
 
@@ -68,3 +70,19 @@ def test_an_untouched_t_stays_put_and_is_drawn_where_push_t_draws_it():
     t_mask = lambda frame: (lambda blue: (blue > 15) & (blue < 60))(frame[..., 2].astype(int) - frame[..., 0])
     a, b = t_mask(panda.frames[0]), t_mask(judge.frames[0])
     assert (a & b).sum() / (a | b).sum() > 0.7
+
+
+def test_a_slowed_down_push_ends_in_the_same_place():
+    # Pushing is quasi-static, so replaying twice as slowly must give the same poses at the
+    # recorded timestamps, while the box is still moving half-way through.
+    timestamps = np.arange(0, 4.0 + 1e-9, 0.1)
+    path = np.stack([np.full_like(timestamps, 25.0), 42.0 - 5.0 * timestamps], axis=1)
+    push = Push(path=path, timestamps=timestamps, start=np.array([25.0, 25.0, 0.0]), shape="box", unit="cm",
+                workspace=50.0, size=(6.0, 8.0, 3.0))
+
+    normal = get_replay("panda").replay(push)
+    slow = get_replay("panda", slowdown=2.0).replay(push)
+
+    assert slow.poses.shape == normal.poses.shape == (len(timestamps), 3)
+    np.testing.assert_allclose(slow.poses[:, :2], normal.poses[:, :2], atol=0.5)
+    np.testing.assert_allclose(slow.pusher, path, atol=1.0)
