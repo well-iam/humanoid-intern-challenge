@@ -11,6 +11,9 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/results.json    the report, machine-readable           (evaluate)
     <root>/<dataset>/<encoder>/report.md       the report, for people                 (evaluate)
     <root>/<dataset>/<encoder>/retrievals.png  nearest real frames of a few rollouts  (retrievals)
+    <root>/<dataset>/<encoder>/seed-<n>/       predictor.pt, predictor-blind.pt, results.json and
+                                               report.md of a run trained with seed n (train and
+                                               evaluate with seed=n; seed 0 is the encoder folder)
     <root>/<dataset>/error-vs-horizon.png      every evaluated encoder, one row each  (compare)
     <root>/<dataset>/winner.json               the winning encoder and why            (compare)
 
@@ -78,34 +81,42 @@ def train(
     root: str | Path | None = None,
     blind: bool = False,
     device: str | None = None,
+    seed: int = 0,
     **options,
 ) -> None:
     """Train the predictor (or, with `blind`, the action-blind predictor) on the training episodes.
 
-    `options` go to `pwm.predictor.train` (size, steps, batch_size, lr, precision, ...).
+    `seed` sets the initial weights and the batches; a seed other than 0 is a separate run,
+    saved in its own folder. `options` go to `pwm.predictor.train` (size, steps, batch_size,
+    lr, precision, ...).
     """
     folder = data_root(root) / dataset
     episodes = load_episodes(folder / "episodes")
     embeddings = load_embeddings(dataset, encoder, episodes, root)
     predictor = train_predictor(
-        episodes, embeddings, DATASETS[dataset].step, use_actions=not blind, device=device or _device(), **options
+        episodes, embeddings, DATASETS[dataset].step, use_actions=not blind, device=device or _device(), seed=seed,
+        **options,
     )
-    predictor.save(folder / encoder / _predictor_file(blind))
+    run = run_folder(dataset, encoder, root, seed)
+    run.mkdir(parents=True, exist_ok=True)
+    predictor.save(run / _predictor_file(blind))
 
 
-def evaluate(dataset: str, encoder: str, root: str | Path | None = None) -> Report:
-    """Score the static baseline and whichever predictors have been trained."""
+def evaluate(dataset: str, encoder: str, root: str | Path | None = None, seed: int = 0) -> Report:
+    """Score the static baseline and whichever predictors of the run trained with `seed` exist.
+    The held-out windows and the shuffled actions are the same for every seed."""
     folder = data_root(root) / dataset
     episodes = load_episodes(folder / "episodes")
     embeddings = load_embeddings(dataset, encoder, episodes, root)
     spec = DATASETS[dataset]
+    run = run_folder(dataset, encoder, root, seed)
     trained = {}
     for role, blind in (("predictor", False), ("blind", True)):
-        path = folder / encoder / _predictor_file(blind)
+        path = run / _predictor_file(blind)
         if path.exists():
             trained[role] = Predictor.load(path, _device()).rollout
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
-    report.save(folder / encoder, title=f"{dataset}, {encoder} encoder")
+    report.save(run, title=f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""))
     return report
 
 
@@ -189,6 +200,12 @@ def retrievals(dataset: str, encoder: str, root: str | Path | None = None, n_rol
     path = folder / encoder / "retrievals.png"
     save_retrievals(rows, HORIZONS, path, held_episodes[0].unit)
     return path
+
+
+def run_folder(dataset: str, encoder: str, root: str | Path | None = None, seed: int = 0) -> Path:
+    """Where the predictors and results of the run trained with `seed` live."""
+    folder = data_root(root) / dataset / encoder
+    return folder / f"seed-{seed}" if seed else folder
 
 
 def _predictor_file(blind: bool) -> str:

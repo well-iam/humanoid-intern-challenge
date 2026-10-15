@@ -39,6 +39,28 @@ def test_stages_report_the_trained_predictors_and_the_gates(tmp_path):
     assert results["validation_gate"] in (True, False)
 
 
+def test_a_run_trained_with_another_seed_lives_in_its_own_folder_and_leaves_the_default_run_alone(tmp_path):
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3)
+    stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3)
+    stages.evaluate("toy", "toy", root=tmp_path)
+    default = tmp_path / "toy" / "toy"
+    before = {name: (default / name).read_bytes() for name in ("predictor.pt", "predictor-blind.pt", "results.json")}
+
+    stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3, seed=1)
+    stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3, seed=1)
+    stages.evaluate("toy", "toy", root=tmp_path, seed=1)
+
+    assert {name: (default / name).read_bytes() for name in before} == before
+    seeded = json.loads((default / "seed-1" / "results.json").read_text())
+    ours = json.loads(before["results.json"])
+    assert seeded["validation_gate"] in (True, False)
+    assert seeded["errors"]["predictor"] != ours["errors"]["predictor"]  # another model
+    assert seeded["errors"]["static baseline"] == ours["errors"]["static baseline"]  # same held-out windows
+    assert stages.compare("toy", root=tmp_path) == "toy"  # a seed run is not mistaken for an encoder
+
+
 def test_comparing_encoders_picks_the_one_that_predicts_the_object_better_and_plots_both(tmp_path, monkeypatch):
     class BlurryEncoder(ToyEncoder):
         """The toy encoder with noise on top: it shows the object less clearly."""

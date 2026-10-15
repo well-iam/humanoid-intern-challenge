@@ -16,6 +16,7 @@ parser.add_argument("--batch-size", type=int, default=16)
 parser.add_argument("--lr", type=float, help="default: the size's learning rate")
 parser.add_argument("--device", help="default: cuda if available, else cpu")
 parser.add_argument("--precision", choices=["fp32", "fp16"], default="fp32", help="fp16: autocast + gradient scaler")
+parser.add_argument("--seed", type=int, default=0, help="weights and batches; n > 0 saves to <encoder>/seed-n/")
 args = parser.parse_args()
 
 stages.train(
@@ -29,5 +30,6 @@ stages.train(
     batch_size=args.batch_size,
     lr=args.lr,
     precision=args.precision,
+    seed=args.seed,
     log_every=100,
 )
