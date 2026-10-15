@@ -50,3 +50,21 @@ def test_a_straight_push_moves_the_box_in_the_push_direction(floating):
     assert -11.0 < dy < -5.0, dy
     assert abs(dx) < 0.25 * abs(dy), dx
     assert np.linalg.norm(result.pusher - path, axis=1).max() < 1.0  # it still follows while pushing
+
+
+def test_an_untouched_t_stays_put_and_is_drawn_where_push_t_draws_it():
+    # Same start as the Push-T judge's test: the pusher runs along the top wall, far from the T.
+    start = np.array([300.0, 250.0, 0.7])
+    path = np.stack([np.linspace(40, 470, 21), np.full(21, 40.0)], axis=1)
+    push = Push(path=path, timestamps=np.arange(21) * 0.1, start=start, shape="T", unit="Push-T units")
+
+    panda = get_replay("panda").replay(push, frame_size=96)
+    judge = get_replay("pusht").replay(push, frame_size=96)
+
+    np.testing.assert_allclose(panda.final, start, atol=0.5)
+    assert panda.frames.shape == (21, 96, 96, 3) and panda.frames.dtype == np.uint8
+    # The T is slate grey in both: bluer than the table and the arm, much less blue than Push-T's pusher.
+    # In the first frame the arm reaches to the top-left corner, clear of the T.
+    t_mask = lambda frame: (lambda blue: (blue > 15) & (blue < 60))(frame[..., 2].astype(int) - frame[..., 0])
+    a, b = t_mask(panda.frames[0]), t_mask(judge.frames[0])
+    assert (a & b).sum() / (a | b).sum() > 0.7

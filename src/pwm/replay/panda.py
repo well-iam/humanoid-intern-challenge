@@ -49,11 +49,13 @@ CAMERA_HEIGHT = 1.5  # m above the table
 
 
 class PandaReplay:
-    def __init__(self, floating: bool = False, slowdown: float = 1.0, root=None):
+    def __init__(self, floating: bool = False, slowdown: float = 1.0, camera: str = "top", root=None):
         from pwm.stages import data_root
 
+        assert camera in ("top", "side"), camera
         self.floating = floating
         self.slowdown = slowdown
+        self.camera = camera
         self.xml = panda_xml(data_root(root))
 
     def replay(self, push: Push, frame_size: int | None = None) -> Replayed:
@@ -64,10 +66,8 @@ class PandaReplay:
         obj = model.body("object")
 
         t0 = push.timestamps[0]
-        targets = np.stack([table.to_world(_interp(push, t)) for t in push.timestamps])
-
         arm = None if self.floating else _ArmControl(self.xml, model)
-        start = targets[0]
+        start = table.to_world(push.path[0])
         if arm:
             arm.reset(data, start)
         else:
@@ -95,7 +95,9 @@ class PandaReplay:
             pusher.append(table.from_world(data.site_xpos[tip][:2]))
             poses.append(table.object_pose(data.xpos[obj.id][:2], data.xquat[obj.id]))
             if renderer:
-                renderer.update_scene(data, camera="top")
+                renderer.update_scene(data, camera=self.camera)
+                if self.camera == "top":
+                    _ghost_arm(renderer.scene, model)
                 frames.append(renderer.render().copy())
         if renderer:
             renderer.close()
@@ -116,10 +118,15 @@ class PandaReplay:
                 body.gravcomp = 1
 
         world = spec.worldbody
-        world.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.5, 1.5, 0.01], rgba=[0.85, 0.85, 0.82, 1])
-        world.add_light(pos=[REACH, 0, 2], dir=[0, 0, -1], diffuse=[0.6, 0.6, 0.6])
+        for light in list(spec.lights):
+            spec.delete(light)
+        spec.visual.headlight.ambient = [0.25] * 3
+        spec.visual.headlight.diffuse = [0.15] * 3
+        world.add_light(pos=[REACH, 0, 2], dir=[0, 0, -1], diffuse=[0.45] * 3, specular=[0.05] * 3)
+        world.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.5, 1.5, 0.01], rgba=[1.0, 1.0, 0.97, 1])
         fovy = 2 * np.degrees(np.arctan(table.half_width / CAMERA_HEIGHT))
         world.add_camera(name="top", pos=[REACH, 0, CAMERA_HEIGHT], xyaxes=[0, -1, 0, 1, 0, 0], fovy=fovy)
+        world.add_camera(name="side", pos=[REACH + 0.75, -0.75, 0.7], xyaxes=_look_at([REACH + 0.75, -0.75, 0.7], [REACH - 0.1, 0, 0.1]), fovy=45)
 
         body = world.add_body(name="object")
         body.add_freejoint()
@@ -187,6 +194,21 @@ def _floating_hand(panda: mujoco.MjSpec) -> mujoco.MjSpec:
     hand.pos, hand.quat = [0, 0, 0], [1, 0, 0, 0]  # in the mocap body's frame, not on link 7
     mocap.add_frame().attach_body(hand, "", "")
     return spec
+
+
+def _ghost_arm(scene: mujoco.MjvScene, model: mujoco.MjModel) -> None:
+    """Draw the arm's links see-through in the top view, so they do not hide the object."""
+    for geom in scene.geoms[: scene.ngeom]:
+        if geom.objtype == mujoco.mjtObj.mjOBJ_GEOM and model.body(model.geom_bodyid[geom.objid]).name.startswith("link"):
+            geom.rgba[3] = 0.15
+
+
+def _look_at(eye, target) -> list[float]:
+    """Camera x and y axes for a camera at `eye` looking at `target`, with the world's z up."""
+    forward = np.subtract(target, eye) / np.linalg.norm(np.subtract(target, eye))
+    right = np.cross(forward, [0, 0, 1])
+    right /= np.linalg.norm(right)
+    return [*right, *np.cross(right, forward)]
 
 
 def _hand_position(target: np.ndarray) -> np.ndarray:
