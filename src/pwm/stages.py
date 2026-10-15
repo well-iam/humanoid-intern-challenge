@@ -10,6 +10,9 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/predictor-blind.pt  the action-blind predictor        (train --blind)
     <root>/<dataset>/<encoder>/results.json    the report, machine-readable           (evaluate)
     <root>/<dataset>/<encoder>/report.md       the report, for people                 (evaluate)
+    <root>/<dataset>/<encoder>/retrievals.png  nearest real frames of a few rollouts  (retrievals)
+    <root>/<dataset>/error-vs-horizon.png      every evaluated encoder, one row each  (compare)
+    <root>/<dataset>/winner.json               the winning encoder and why            (compare)
 
 The root is the `root` argument, else the PWM_DATA environment variable, else ./data.
 """
