@@ -1,2 +1,4 @@
 .scratch/
 .venv/
+data/
+__pycache__/
