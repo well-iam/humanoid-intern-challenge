@@ -43,11 +43,16 @@ class Replayed:
     frames: np.ndarray | None  # (T, S, S, 3) uint8 top-down frames, if asked for
 
 
-def get_replay(name: str):
+def get_replay(name: str, **options):
     """A replay simulator: `.replay(push, frame_size=None) -> Replayed`. Frames are rendered only
-    when `frame_size` (the side of the square frames in pixels) is given."""
+    when `frame_size` (the side of the square frames in pixels) is given. Options go to the
+    simulator, e.g. "panda" takes `floating`, `slowdown` and `root`."""
     if name == "pusht":
         from pwm.replay.pusht import PushTJudge
 
-        return PushTJudge()
+        return PushTJudge(**options)
+    if name == "panda":
+        from pwm.replay.panda import PandaReplay
+
+        return PandaReplay(**options)
     raise ValueError(f"unknown replay simulator: {name}")
