@@ -33,10 +33,11 @@ LABELS = {
     PROBE_FLOOR: "probe floor (real future frame)",
 }
 LEGEND_ORDER = [PREDICTOR, BLIND, STATIC, REVERSED, SHUFFLED, PROBE_FLOOR]
+# (title, window subset, rows, whether to mark the validation gate's pass mark)
 PANELS = [
-    ("Moving windows", "moving", [STATIC, BLIND, PREDICTOR, PROBE_FLOOR]),
-    ("All windows", "all", [STATIC, BLIND, PREDICTOR, PROBE_FLOOR]),
-    ("Wrong-action test, moving windows", "moving", [STATIC, REVERSED, SHUFFLED, PREDICTOR]),
+    ("Moving windows", "moving", [STATIC, BLIND, PREDICTOR, PROBE_FLOOR], True),
+    ("All windows", "all", [STATIC, BLIND, PREDICTOR, PROBE_FLOOR], False),
+    ("Wrong-action test, moving windows", "moving", [STATIC, REVERSED, SHUFFLED, PREDICTOR], False),
 ]
 
 
@@ -52,17 +53,18 @@ def plot_errors(reports: dict[str, Report], path: Path) -> None:
         subfig.suptitle(f"{encoder}: validation gate {verdict}", x=0.01, ha="left", fontsize=11,
                         fontweight="semibold", color=INK)
         axes = subfig.subplots(1, len(PANELS))
-        for ax, (title, subset, names) in zip(axes, PANELS):
+        for column, (ax, (title, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
             if first is None:
                 first = ax
             else:
                 ax.sharey(first)
             _style(ax, report)
+            ax.tick_params(labelleft=column == 0)
             ax.set_title(title, color=INK_2, fontsize=9, loc="left")
             for name in names:
                 if name in report.errors:
                     _line(ax, report, name, subset)
-            if subset == "moving" and BLIND in report.errors and title.startswith("Moving"):
+            if pass_mark and BLIND in report.errors:
                 _pass_mark(ax, report)
             ax.set_xlabel(f"horizon (steps of {report.step:g} s)", color=INK_2)
         axes[0].set_ylabel(f"object position error ({report.unit})", color=INK_2)

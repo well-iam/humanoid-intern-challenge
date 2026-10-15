@@ -153,7 +153,7 @@ def nearest_frames(
     found = torch.zeros((len(q), 2), dtype=torch.long, device=device)
     for e, embeddings in enumerate(bank):
         for start in range(0, len(embeddings), chunk):
-            b = torch.as_tensor(np.asarray(embeddings[start : start + chunk]), dtype=torch.float32, device=device)
+            b = torch.as_tensor(np.array(embeddings[start : start + chunk], dtype=np.float32), device=device)
             distance, frame = torch.cdist(q, (b * scale).flatten(1)).min(dim=1)
             closer = distance < best
             best = torch.where(closer, distance, best)
