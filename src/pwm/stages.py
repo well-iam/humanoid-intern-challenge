@@ -15,7 +15,7 @@ writes its outputs there, so any stage can be rerun on its own:
                                                report.md of a run trained with seed n (train and
                                                evaluate with seed=n; seed 0 is the encoder folder)
     <root>/<dataset>/<encoder>/seeds.md        the runs of several seeds side by side  (seeds)
-    <root>/<dataset>/<encoder>/error-vs-horizon-seeds.png  the same, plotted          (seeds)
+    <root>/<dataset>/<encoder>/error-vs-horizon-seeds.png  one row per seed           (seeds)
     <root>/<dataset>/error-vs-horizon.png      every evaluated encoder, one row each  (compare)
     <root>/<dataset>/winner.json               the winning encoder and why            (compare)
 
@@ -42,7 +42,7 @@ from pwm.evaluator import (
     winning_encoder,
 )
 from pwm.evaluator import evaluate as evaluate_episodes
-from pwm.plots import plot_errors, plot_seeds, save_retrievals
+from pwm.plots import ENCODER_NAMES, plot_errors, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
 from pwm.windows import make_windows
@@ -159,10 +159,12 @@ def compare(dataset: str, root: str | Path | None = None) -> str:
 
 def seeds(dataset: str, encoder: str, seeds: list[int], root: str | Path | None = None) -> Path:
     """Compare the evaluated runs of one encoder trained with different seeds: write their
-    gate verdicts and error spread to seeds.md, and plot it. Returns the path of seeds.md."""
+    gate verdicts and error spread to seeds.md, and plot one row per seed. Returns the path
+    of seeds.md."""
     folder = data_root(root) / dataset / encoder
     reports = {seed: Report.load(run_folder(dataset, encoder, root, seed)) for seed in seeds}
-    plot_seeds(reports, encoder, folder / "error-vs-horizon-seeds.png")
+    name = ENCODER_NAMES.get(encoder, encoder)
+    plot_errors({f"{name}, seed {seed}": r for seed, r in reports.items()}, folder / "error-vs-horizon-seeds.png")
     path = folder / "seeds.md"
     path.write_text(seeds_to_markdown(reports, f"{dataset}, {encoder} encoder"), encoding="utf-8")
     return path

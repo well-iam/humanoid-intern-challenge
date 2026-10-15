@@ -1,6 +1,5 @@
 """Figures of the results report: object position error against horizon, and retrievals."""
 
-import dataclasses
 from pathlib import Path
 
 import matplotlib
@@ -8,7 +7,6 @@ import matplotlib
 matplotlib.use("Agg")  # files only, no window; works headless on Colab
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
 
 from pwm.evaluator import (  # noqa: E402
     BLIND,
@@ -47,81 +45,38 @@ PANELS = [
 def plot_errors(reports: dict[str, Report], path: Path) -> None:
     """One row per encoder: error vs horizon on moving windows, on all windows, and with
     wrong actions. All panels share the error axis so encoders compare at a glance."""
-    fig = _figure(len(reports))
+    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
+    fig = plt.figure(figsize=(11, 3.4 * len(reports) + 0.6), layout="constrained", facecolor=SURFACE)
     first = None
     for subfig, (encoder, report) in zip(np.atleast_1d(fig.subfigures(len(reports), 1)), reports.items()):
+        subfig.set_facecolor(SURFACE)
         verdict = {True: "passes", False: "fails", None: "not run"}[report.validation_gate]
-        first = _row(subfig, report, f"{ENCODER_NAMES.get(encoder, encoder)}: validation gate {verdict}", first)
+        subfig.suptitle(f"{ENCODER_NAMES.get(encoder, encoder)}: validation gate {verdict}", x=0.01, ha="left",
+                        fontsize=11, fontweight="bold", color=INK)
+        axes = subfig.subplots(1, len(PANELS))
+        for column, (ax, (title, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
+            if first is None:
+                first = ax
+            else:
+                ax.sharey(first)
+            _style(ax, report)
+            ax.tick_params(labelleft=column == 0)
+            ax.set_title(title, color=INK_2, fontsize=9, loc="left")
+            for name in names:
+                if name in report.errors:
+                    _line(ax, report, name, subset)
+            if pass_mark and BLIND in report.errors:
+                _pass_mark(ax, report)
+            ax.set_xlabel(f"horizon (steps of {report.step:g} s)", color=INK_2)
+        axes[0].set_ylabel(f"object position error ({report.unit})", color=INK_2)
     first.set_ylim(bottom=0)
-    _legend_and_save(fig, path)
 
-
-def plot_seeds(reports: dict[int, Report], encoder: str, path: Path) -> None:
-    """The runs of one encoder trained with different seeds (`reports` maps seed -> report),
-    drawn as plot_errors draws one encoder: each line is the mean over seeds, its band spans
-    the lowest to the highest seed, and the pass mark is the mean of the seeds' pass marks."""
-    runs = list(reports.values())
-    per_seed = {
-        (name, subset): np.array([r.errors[name][subset] for r in runs])
-        for name in runs[0].errors
-        for subset in ("moving", "all")
-    }
-    mean = dataclasses.replace(runs[0], errors={name: {} for name in runs[0].errors})
-    for (name, subset), values in per_seed.items():
-        mean.errors[name][subset] = list(values.mean(axis=0))
-    spread = {key: (values.min(axis=0), values.max(axis=0)) for key, values in per_seed.items()}
-
-    passes = sum(bool(r.validation_gate) for r in runs)
-    title = f"{ENCODER_NAMES.get(encoder, encoder)}, {len(runs)} seeds: validation gate passes in {passes} of {len(runs)}"
-    fig = _figure(1)
-    first = _row(fig.subfigures(1, 1), mean, title, None, spread, [_pass_mark_of(r) for r in runs])
-    first.set_ylim(bottom=0)
-    band = Patch(facecolor=MUTED, alpha=0.3, linewidth=0)
-    _legend_and_save(fig, path, extra={"line: mean over seeds; band: lowest to highest seed": band})
-
-
-def _figure(rows: int):
-    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
-    return plt.figure(figsize=(11, 3.4 * rows + 0.6), layout="constrained", facecolor=SURFACE)
-
-
-def _row(subfig, report: Report, title: str, first, spread=None, pass_marks=None):
-    """Draw the panels of one report into `subfig`, sharing the error axis with `first` (the
-    first panel drawn so far, or None). Returns the first panel."""
-    subfig.set_facecolor(SURFACE)
-    subfig.suptitle(title, x=0.01, ha="left", fontsize=11, fontweight="bold", color=INK)
-    axes = subfig.subplots(1, len(PANELS))
-    for column, (ax, (panel, subset, names, pass_mark)) in enumerate(zip(axes, PANELS)):
-        if first is None:
-            first = ax
-        else:
-            ax.sharey(first)
-        _style(ax, report)
-        ax.tick_params(labelleft=column == 0)
-        ax.set_title(panel, color=INK_2, fontsize=9, loc="left")
-        for name in names:
-            if name in report.errors:
-                _line(ax, report, name, subset)
-                if spread and name != PROBE_FLOOR:
-                    ax.fill_between(report.horizons, *spread[name, subset], color=COLOURS[name], alpha=0.18,
-                                    linewidth=0, zorder=1)
-        if pass_mark and BLIND in report.errors:
-            _pass_mark(ax, np.mean(pass_marks) if pass_marks else _pass_mark_of(report))
-        ax.set_xlabel(f"horizon (steps of {report.step:g} s)", color=INK_2)
-    axes[0].set_ylabel(f"object position error ({report.unit})", color=INK_2)
-    return first
-
-
-def _legend_and_save(fig, path: Path, extra: dict | None = None) -> None:
-    """One legend for the whole figure, in LEGEND_ORDER, then any `extra` {label: handle}."""
     handles = {}
     for ax in fig.get_axes():
         for h, label in zip(*ax.get_legend_handles_labels()):
             handles.setdefault(label, h)
     order = [LABELS[name] for name in LEGEND_ORDER if LABELS[name] in handles]
-    handles.update(extra or {})
-    order += list(extra or {})
-    fig.legend([handles[k] for k in order], order, loc="outside upper center", ncol=4 if extra else 3, frameon=False,
+    fig.legend([handles[k] for k in order], order, loc="outside upper center", ncol=3, frameon=False,
                fontsize=9, labelcolor=INK_2)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
     plt.close(fig)
@@ -160,14 +115,10 @@ def _line(ax, report: Report, name: str, subset: str) -> None:
     )
 
 
-def _pass_mark_of(report: Report) -> float:
-    """The validation gate's pass mark: 20% below the better baseline at the gate's horizon."""
+def _pass_mark(ax, report: Report) -> None:
+    """The validation gate's pass mark at its horizon: 20% below the better baseline."""
     i = report.horizons.index(GATE_HORIZON)
-    return (1 - GATE_MARGIN) * min(report.errors[STATIC]["moving"][i], report.errors[BLIND]["moving"][i])
-
-
-def _pass_mark(ax, mark: float) -> None:
-    """Mark the validation gate's pass mark at its horizon."""
+    mark = (1 - GATE_MARGIN) * min(report.errors[STATIC]["moving"][i], report.errors[BLIND]["moving"][i])
     ax.plot([GATE_HORIZON / 1.15, GATE_HORIZON * 1.15], [mark, mark], color=INK, linewidth=1.5, zorder=4)
     ax.annotate(
         "pass mark", xy=(GATE_HORIZON * 1.22, mark), va="center", fontsize=8, color=INK_2, annotation_clip=False

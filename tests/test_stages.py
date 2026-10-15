@@ -61,7 +61,7 @@ def test_a_run_trained_with_another_seed_lives_in_its_own_folder_and_leaves_the_
     assert stages.compare("toy", root=tmp_path) == "toy"  # a seed run is not mistaken for an encoder
 
 
-def test_the_seed_summary_gives_each_seeds_gate_verdict_and_plots_the_spread(tmp_path):
+def test_the_seed_summary_gives_each_seeds_gate_verdict_and_plots_each_seed(tmp_path):
     stages.make_episodes("toy", root=tmp_path)
     stages.embed("toy", "toy", root=tmp_path)
     for seed in (0, 1):
