@@ -5,15 +5,13 @@ writes its outputs there, so any stage can be rerun on its own:
 
     <root>/<dataset>/raw/                    raw source, owned by the dataset adapter
     <root>/<dataset>/episodes/<name>.npz     one file per episode         (make_episodes)
-    <root>/<dataset>/<encoder>/embeddings.npy  fp16, all frames in episode-name order  (embed)
-    <root>/<dataset>/<encoder>/embeddings.json episode names and frame counts           (embed)
+    <root>/<dataset>/<encoder>/embeddings/<name>.npy  fp16 (frames, patches, dims)  (embed)
     <root>/<dataset>/<encoder>/results.json    the report, machine-readable           (evaluate)
     <root>/<dataset>/<encoder>/report.md       the report, for people                 (evaluate)
 
 The root is the `root` argument, else the PWM_DATA environment variable, else ./data.
 """
 
-import json
 import os
 from pathlib import Path
 
@@ -37,38 +35,29 @@ def make_episodes(dataset: str, root: str | Path | None = None) -> None:
 
 
 def embed(dataset: str, encoder: str, root: str | Path | None = None) -> None:
+    """Encode every episode that has no cached frame embeddings yet (or a different frame count)."""
     folder = data_root(root) / dataset
-    episodes = load_episodes(folder / "episodes")
-    enc = get_encoder(encoder)
-    out = folder / encoder
+    out = folder / encoder / "embeddings"
     out.mkdir(parents=True, exist_ok=True)
-
-    total = sum(len(ep.frames) for ep in episodes)
-    store, offset = None, 0
-    for ep in episodes:
-        e = enc.encode(ep.frames)
-        if store is None:
-            store = np.lib.format.open_memmap(out / "embeddings.npy", "w+", np.float16, (total, *e.shape[1:]))
-        store[offset : offset + len(e)] = e
-        offset += len(e)
-    store.flush()
-    (out / "embeddings.json").write_text(json.dumps({"episodes": [[ep.name, len(ep.frames)] for ep in episodes]}))
+    enc = None
+    for ep in load_episodes(folder / "episodes"):
+        path = out / f"{ep.name}.npy"
+        if path.exists() and len(np.load(path, mmap_mode="r")) == len(ep.frames):
+            continue
+        enc = enc or get_encoder(encoder)  # load the model only if there is work to do
+        partial = out / f"{ep.name}.partial.npy"
+        np.save(partial, enc.encode(ep.frames).astype(np.float16))
+        partial.replace(path)  # an interrupted run never leaves a half-written cache file
 
 
 def load_embeddings(dataset: str, encoder: str, episodes: list[Episode], root=None) -> list[np.ndarray]:
     """Memory-mapped frame embeddings of each episode, in the order of `episodes`."""
-    folder = data_root(root) / dataset / encoder
-    store = np.load(folder / "embeddings.npy", mmap_mode="r")
-    index = json.loads((folder / "embeddings.json").read_text())["episodes"]
-    starts, offset = {}, 0
-    for name, n in index:
-        starts[name] = (offset, n)
-        offset += n
+    folder = data_root(root) / dataset / encoder / "embeddings"
     views = []
     for ep in episodes:
-        start, n = starts[ep.name]
-        assert n == len(ep.frames), ep.name
-        views.append(store[start : start + n])
+        view = np.load(folder / f"{ep.name}.npy", mmap_mode="r")
+        assert len(view) == len(ep.frames), ep.name
+        views.append(view)
     return views
 
 
