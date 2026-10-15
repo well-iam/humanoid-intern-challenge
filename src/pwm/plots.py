@@ -158,7 +158,7 @@ def plot_ranking(report, path: Path, encoder: str) -> None:
                       linewidths=0, zorder=2)
         right.errorbar(r["spearman_mean"], y, xerr=1.96 * r["spearman_se"], fmt="o", color=INK, markersize=7,
                        markeredgecolor=SURFACE, markeredgewidth=1.5, capsize=0, linewidth=2, zorder=3)
-        right.annotate(f"mean {r['spearman_mean']:+.2f}", xy=(r["spearman_mean"], y - 0.3), ha="center",
+        right.annotate(f"mean {r['spearman_mean']:+.2f}", xy=(r["spearman_mean"], y + 0.24), ha="center",
                        va="top", fontsize=8, color=INK)
     right.axvline(0, color=FLOOR_COLOUR, linewidth=1.5, zorder=1)
     right.set_yticks(range(len(rows)), [label for _, label, _ in rows])

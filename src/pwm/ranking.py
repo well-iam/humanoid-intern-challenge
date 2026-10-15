@@ -105,12 +105,13 @@ class RankingReport:
     def save(self, folder: Path) -> None:
         """Write ranking.json (the scores and the summary) and report.md into `folder`."""
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "ranking.json").write_text(json.dumps({**asdict(self), "summary": self.summary()}, indent=1))
-        (folder / "report.md").write_text(self.to_markdown())
+        (folder / "ranking.json").write_text(json.dumps({**asdict(self), "summary": self.summary()}, indent=1),
+                                             encoding="utf-8")
+        (folder / "report.md").write_text(self.to_markdown(), encoding="utf-8")
 
     @classmethod
     def load(cls, folder: Path) -> "RankingReport":
-        results = json.loads((folder / "ranking.json").read_text())
+        results = json.loads((folder / "ranking.json").read_text(encoding="utf-8"))
         results.pop("summary", None)
         return cls(**results)
 
