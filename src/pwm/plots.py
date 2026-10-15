@@ -8,6 +8,7 @@ import matplotlib
 matplotlib.use("Agg")  # files only, no window; works headless on Colab
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 
 from pwm.evaluator import (  # noqa: E402
     BLIND,
@@ -60,25 +61,23 @@ def plot_seeds(reports: dict[int, Report], encoder: str, path: Path) -> None:
     drawn as plot_errors draws one encoder: each line is the mean over seeds, its band spans
     the lowest to the highest seed, and the pass mark is the mean of the seeds' pass marks."""
     runs = list(reports.values())
-    mean = dataclasses.replace(
-        runs[0],
-        errors={
-            name: {subset: list(np.mean([r.errors[name][subset] for r in runs], axis=0)) for subset in ("moving", "all")}
-            for name in runs[0].errors
-        },
-    )
-    spread = {
-        (name, subset): (np.min(values, axis=0), np.max(values, axis=0))
+    per_seed = {
+        (name, subset): np.array([r.errors[name][subset] for r in runs])
         for name in runs[0].errors
         for subset in ("moving", "all")
-        for values in [[r.errors[name][subset] for r in runs]]
     }
+    mean = dataclasses.replace(runs[0], errors={name: {} for name in runs[0].errors})
+    for (name, subset), values in per_seed.items():
+        mean.errors[name][subset] = list(values.mean(axis=0))
+    spread = {key: (values.min(axis=0), values.max(axis=0)) for key, values in per_seed.items()}
+
     passes = sum(bool(r.validation_gate) for r in runs)
+    title = f"{ENCODER_NAMES.get(encoder, encoder)}, {len(runs)} seeds: validation gate passes in {passes} of {len(runs)}"
     fig = _figure(1)
-    title = (f"{ENCODER_NAMES.get(encoder, encoder)}, {len(runs)} seeds: validation gate passes in {passes} of "
-             f"{len(runs)}. Lines: mean over seeds; bands: lowest to highest seed")
-    _row(fig.subfigures(1, 1), mean, title, None, spread, pass_marks=[_pass_mark_of(r) for r in runs]).set_ylim(bottom=0)
-    _legend_and_save(fig, path)
+    first = _row(fig.subfigures(1, 1), mean, title, None, spread, [_pass_mark_of(r) for r in runs])
+    first.set_ylim(bottom=0)
+    band = Patch(facecolor=MUTED, alpha=0.3, linewidth=0)
+    _legend_and_save(fig, path, extra={"line: mean over seeds; band: lowest to highest seed": band})
 
 
 def _figure(rows: int):
@@ -113,13 +112,16 @@ def _row(subfig, report: Report, title: str, first, spread=None, pass_marks=None
     return first
 
 
-def _legend_and_save(fig, path: Path) -> None:
+def _legend_and_save(fig, path: Path, extra: dict | None = None) -> None:
+    """One legend for the whole figure, in LEGEND_ORDER, then any `extra` {label: handle}."""
     handles = {}
     for ax in fig.get_axes():
         for h, label in zip(*ax.get_legend_handles_labels()):
             handles.setdefault(label, h)
     order = [LABELS[name] for name in LEGEND_ORDER if LABELS[name] in handles]
-    fig.legend([handles[k] for k in order], order, loc="outside upper center", ncol=3, frameon=False,
+    handles.update(extra or {})
+    order += list(extra or {})
+    fig.legend([handles[k] for k in order], order, loc="outside upper center", ncol=4 if extra else 3, frameon=False,
                fontsize=9, labelcolor=INK_2)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
     plt.close(fig)
