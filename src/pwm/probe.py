@@ -19,7 +19,7 @@ import numpy as np
 import torch
 
 # Ridge strengths tried, relative to the mean squared norm of a standardised frame embedding.
-RIDGE_GRID = [10.0**k for k in range(-7, 2)]
+RIDGE_GRID = [10.0**k for k in range(-6, 2)]
 VALIDATION_EVERY = 5  # every 5th training episode helps choose the ridge strength
 BLOCK_BYTES = 2**30  # size of one block of features in float32
 GPU_ABOVE = 2**26  # use the GPU (if any) when frames x features is above this
@@ -36,8 +36,11 @@ class Probe:
         """Fit on the real embeddings (T, ...) and object positions (T, 2) of each training episode."""
         views = [e.reshape(len(e), -1) for e in embeddings]
         n, f = sum(len(v) for v in views), views[0].shape[1]
+        # The products over features run on the GPU if the problem is big; the small
+        # frames-by-frames solves run in float64 on the CPU, which is faster than the
+        # float64 units of consumer GPUs and keeps GPU memory free.
         device = "cuda" if torch.cuda.is_available() and n * f > GPU_ABOVE else "cpu"
-        y = torch.from_numpy(np.concatenate(positions)).double().to(device)
+        y = torch.from_numpy(np.concatenate(positions)).double()
         blocks = _feature_blocks(n, f)
 
         # Pass 1: feature means and spreads, and the Gram matrix of the standardised embeddings.
@@ -49,20 +52,25 @@ class Probe:
             s[s == 0] = 1
             mean[cols], std[cols] = m.cpu().numpy(), s.cpu().numpy()
             x = (x - m) / s
-            gram += (x @ x.T).double()
+            gram += x @ x.T
+        gram = gram.cpu()
 
         ridge = _choose_ridge(gram, y, [len(v) for v in views])
 
         # Pass 2: the primal weights from the dual solution a. On standardised features they
         # are X^T a; dividing by the spread once more makes them apply to the raw embedding.
         y_mean = y.mean(0)
-        eye = torch.eye(n, dtype=gram.dtype, device=device)
-        a = torch.linalg.solve(gram + ridge * _scale(gram) * eye, y - y_mean).float()
+        a = None
+        for ridge in RIDGE_GRID[RIDGE_GRID.index(ridge) :]:  # step up if float error makes it fail
+            a = _solve(gram, y - y_mean, ridge)
+            if a is not None:
+                break
+        a = a.float().to(device)
         weights = np.zeros((f, 2), np.float32)
         for cols in blocks:
             x = _block(views, cols, device) - torch.from_numpy(mean[cols]).to(device)
             weights[cols] = (x.T @ a).cpu().numpy() / std[cols, None] ** 2
-        bias = y_mean.cpu().numpy() - mean.astype(np.float64) @ weights
+        bias = y_mean.numpy() - mean.astype(np.float64) @ weights
         return cls(weights=weights, bias=bias, ridge=ridge)
 
     def predict(self, embeddings: np.ndarray) -> np.ndarray:
@@ -104,15 +112,17 @@ def _choose_ridge(gram: torch.Tensor, y: torch.Tensor, lengths: list[int]) -> fl
     k_val = gram[val][:, fit] - row_mean[val, None] - row_mean[None, fit] + total
     y_mean = y[fit].mean(0)
 
-    scale = _scale(k_fit)
-    eye = torch.eye(len(k_fit), dtype=k_fit.dtype, device=k_fit.device)
     errors = []
     for ridge in RIDGE_GRID:
-        # One Cholesky solve per strength: several times faster than one eigendecomposition.
-        factor, info = torch.linalg.cholesky_ex(k_fit + ridge * scale * eye)
-        if info:  # too weak a ridge for float precision: the system is not positive definite
-            errors.append(np.inf)
-            continue
-        a = torch.cholesky_solve(y[fit] - y_mean, factor)
-        errors.append(float(torch.linalg.norm(k_val @ a + y_mean - y[val], dim=1).mean()))
+        a = _solve(k_fit, y[fit] - y_mean, ridge)
+        error = np.inf if a is None else float(torch.linalg.norm(k_val @ a + y_mean - y[val], dim=1).mean())
+        errors.append(error)
     return RIDGE_GRID[int(np.argmin(errors))]
+
+
+def _solve(gram: torch.Tensor, y: torch.Tensor, ridge: float) -> torch.Tensor | None:
+    """The dual ridge solution a = (K + ridge * scale * I)^-1 y, or None if float error makes
+    the system not positive definite (a ridge too weak for the precision of the Gram matrix)."""
+    eye = torch.eye(len(gram), dtype=gram.dtype)
+    factor, info = torch.linalg.cholesky_ex(gram + ridge * _scale(gram) * eye)
+    return None if info else torch.cholesky_solve(y, factor)
