@@ -1,5 +1,5 @@
 """Redraw every figure that comes from saved results alone (no GPU, no embeddings): error vs horizon per run,
-per dataset and per seed, the near-miss test and the ranking test."""
+per dataset and per seed, the near-miss test, the ranking test and the probe-scaling curve."""
 
 import argparse
 
