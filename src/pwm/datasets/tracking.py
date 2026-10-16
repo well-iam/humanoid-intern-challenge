@@ -1,22 +1,25 @@
 """Clip adapter, part 2: a take's clips -> tracked clips -> episodes.
 
 - Palm: MediaPipe's HandLandmarker (Tasks API, VIDEO mode, one hand) on every video frame from the clap to
-  the clip's end, straightened to a view of the table that reaches 10 cm below the square, where the hand
-  comes in: on the square alone the hand is found only once the palm is well inside. The palm position is the
-  mean of landmarks 0, 5, 9, 13 and 17. Gaps up to MAX_GAP are filled (longer ones too, but flagged), the path
-  inside the hand's visit is smoothed (Savitzky-Golay), and the clip's frames take it at their video frames.
-  Before the hand comes in, the palm is held at its first tracked point and flagged as not seen. The hand's
-  direction (wrist, landmark 0, to the middle finger's base, landmark 9) is kept next to it.
-- Object: the wallet, found in each straightened frame as a dark, not orange (wood and its shadows are
-  orange) region of about the wallet's seen size. Its pose is the minimum-area rectangle around it. Frames
+  the clip's end, straightened to a view of the table that reaches 15 cm below the square (or to the frame's
+  edge, if nearer), where the hand comes in: on the square alone the hand is found only once the palm is well
+  inside. The palm position is the mean of landmarks 0, 5, 9, 13 and 17. Gaps up to MAX_GAP are filled (longer
+  ones too, but flagged), the path inside the hand's visit is smoothed (Savitzky-Golay), and the clip's frames
+  take it at their video frames. Before the hand comes in, the palm is held at its first tracked point and
+  flagged as not seen. The hand's direction (wrist, landmark 0, to the middle finger's base, landmark 9) is
+  kept next to it.
+- Object: found in each straightened frame as the largest region of the setup's object pixels (its top face:
+  white for the box on the carpet) of about its size. Its pose is the minimum-area rectangle around it. Frames
   where the hand hides part of it (area below OCCLUDED of the clip's median) are dropped and filled.
-- Height fix: the camera sees the palm 1.3 cm and the wallet's top 2 cm above the table, so they look shifted
-  away from the point under the lens and slightly too big. Points are moved back toward that point (taken as
-  the image centre) by the ratio of heights: true = nadir + (seen - nadir) * (CAMERA_HEIGHT - h) / CAMERA_HEIGHT.
+- Height fix: the camera sees the palm 1.3 cm and the object's top face its height above the table, so they
+  look shifted away from the point under the lens and slightly too big. Points are moved back toward that point
+  (taken as the image centre) by the ratio of heights: true = nadir + (seen - nadir) * (camera - h) / camera.
+- Setup: the camera height, the object's size and colour and where the square lies come from the take's setup
+  (pwm.datasets.setups); by default CARPET, the real takes' setup.
 - Conversion check: the A4 sheet under the marker is measured in every clip; it lies flat on the table, so
   its size checks the whole pixel-to-cm conversion.
 - Episodes: each clip ends at the last frame where the hand is found (the hand left the view). It is a push if
-  the wallet ends more than MOVED from where it started, else a near-miss. HELD_OUT clips of each kind (at most
+  the object ends more than MOVED from where it started, else a near-miss. HELD_OUT clips of each kind (at most
   half of that kind) are held out, drawn by a fixed seed over all takes together.
 """
 
@@ -28,20 +31,13 @@ import cv2
 import numpy as np
 from scipy.signal import savgol_filter
 
-from pwm.datasets import clips
+from pwm.datasets import clips, setups
+from pwm.datasets.setups import Setup
 from pwm.episodes import Episode
 
-CAMERA_HEIGHT = 77.0  # cm, lens above the table (ticket 10; it was 73 cm before 16 Oct)
 SHEET = (29.7, 21.0)  # cm, A4: the sheet the marker is printed on
-
-# The wallet as the camera sees it, in table cm: (width, length, height), the length along table y at angle 0.
-# A ruler gives 11.5 x 10 x 2 cm, but the wallet is not rigid and its sides bulge, so its seen footprint is
-# about 13 x 11 cm (decided 16 Oct). Replays use this size too.
-WALLET = (11.0, 13.0, 2.0)
-DARK = 100  # a wallet pixel has every channel below this...
-WARM = 25  # ...and red at most this much above blue (the wood and shadows on it are orange)
-SHAPE_TOLERANCE = 2.0  # cm: a dark region is the wallet if both its sides are this close to the wallet's
-OCCLUDED = 0.6  # the wallet is partly hidden when its area is below this fraction of the clip's median
+SHAPE_TOLERANCE = 2.0  # cm: a region is the object if both its sides are this close to the object's
+OCCLUDED = 0.6  # the object is partly hidden when its area is below this fraction of the clip's median
 
 HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 PALM = [0, 5, 9, 13, 17]  # MediaPipe hand landmarks: the wrist and the four finger bases
@@ -52,7 +48,7 @@ VIEW_SCALE = 8.0  # px per cm in the tracking view
 MAX_GAP = 0.25  # seconds: longer gaps in the palm path are flagged
 SMOOTHING = (9, 2)  # Savitzky-Golay window (video frames, 0.3 s at 30 fps) and polynomial order
 
-MOVED = 1.0  # cm: a clip is a push if the wallet ends further than this from where it started
+MOVED = 1.0  # cm: a clip is a push if the object ends further than this from where it started
 HELD_OUT = {"push": 6, "near-miss": 2}  # held-out clips per kind (at most half of each kind)
 SEED = 0
 STEP = 0.25  # seconds: every 2nd frame at 8 fps, two interleaved sequences
@@ -68,10 +64,10 @@ class TrackedClip:
     timestamps: np.ndarray  # (T,) seconds since the clap
     sheet: np.ndarray  # (2,) the A4 sheet's long and short side in table cm, measured in the hand-free second
     drift_px: float  # how far the marker moved during the clip, image px (over 1 px: the camera moved)
-    object_pos: np.ndarray  # (T, 2) the wallet's centre on the table, cm (filled; NaN if never found)
+    object_pos: np.ndarray  # (T, 2) the object's centre on the table, cm (filled; NaN if never found)
     object_angle: np.ndarray  # (T,) radians, see pwm.replay (0: long side along table y); not wrapped
     object_seen: np.ndarray  # (T,) bool: False where it was not found or partly hidden (then filled)
-    object_size: np.ndarray  # (2,) the seen footprint (width, length), cm: the median over the frames it is seen
+    object_size: np.ndarray  # (2,) its top face (width, length) after the height fix, cm: median over the frames seen
     palm: np.ndarray  # (T, 2) the palm position on the table, cm (NaN if the hand is never found)
     palm_seen: np.ndarray  # (T,) bool: False where the hand was not found in that frame (held or filled)
     hand_direction: np.ndarray  # (T, 2) unit vector from the wrist to the middle finger's base, table frame
@@ -86,12 +82,12 @@ class TrackedClip:
         if not self.palm_seen.any():
             return "the hand is never found"
         if not self.object_seen.any():
-            return "the wallet is never found"
+            return "the object is never found"
         return None
 
     @property
     def moved(self) -> float:
-        """How far the wallet ends from where it started, cm."""
+        """How far the object ends from where it started, cm."""
         return float(np.linalg.norm(self.object_pos[self.kept - 1] - self.object_pos[0]))
 
     @property
@@ -110,10 +106,10 @@ def hand_model(models: Path) -> Path:
     return path
 
 
-def track_take(video: str | Path, models: Path) -> list[TrackedClip]:
-    """Cut a take into clips and track the palm and the wallet in each."""
+def track_take(video: str | Path, models: Path, setup: Setup = setups.CARPET) -> list[TrackedClip]:
+    """Cut a take into clips and track the palm and the object in each."""
     video = Path(video)
-    take = clips.cut_take(video)
+    take = clips.cut_take(video, setup.square)
     stills, hands = _scan(video, take, hand_model(models))
     tracked = []
     for clip, still, hand in zip(take.clips, stills, hands):
@@ -126,8 +122,8 @@ def track_take(video: str | Path, models: Path) -> list[TrackedClip]:
                 timestamps=clip.timestamps,
                 sheet=sheet_size(still, clip),
                 drift_px=float(np.nanmax(clip.drift_px)),
-                **_track_object(clip.frames, clip.timestamps, nadir),
-                **_palm_path(hand, take.frame_times, clip.clap, picks, nadir),
+                **_track_object(clip.frames, clip.timestamps, nadir, setup),
+                **_palm_path(hand, take.frame_times, clip.clap, picks, nadir, setup.camera_height),
             )
         )
     return tracked
@@ -161,12 +157,12 @@ def to_episodes(tracked: list[TrackedClip]) -> list[Episode]:
     return episodes
 
 
-def build(raw_dir: Path) -> list[Episode]:
+def build(raw_dir: Path, setup: Setup = setups.CARPET) -> list[Episode]:
     """Dataset-adapter entry point: every take (*.mp4) in `raw_dir`, cut, tracked and split. The hand model is
     kept in <root>/models, the raw folder being <root>/<dataset>/raw (or <root>/clips/test-take)."""
     raw_dir = Path(raw_dir)
     models = raw_dir.resolve().parents[1] / "models"
-    return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models)])
+    return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models, setup)])
 
 
 def _held_out(names: list[str], kinds: list[str]) -> set[str]:
@@ -180,19 +176,20 @@ def _held_out(names: list[str], kinds: list[str]) -> set[str]:
     return held_out
 
 
-def object_corners(pos: np.ndarray, angle: np.ndarray) -> np.ndarray:
-    """The wallet's footprint corners (..., 4, 2) in table cm, for centres (..., 2) and angles (...), using the
-    seen size WALLET: its edges, e.g. to find where the hand touches it."""
+def object_corners(pos: np.ndarray, angle: np.ndarray, size=setups.CARPET.object_size) -> np.ndarray:
+    """The object's footprint corners (..., 4, 2) in table cm, for centres (..., 2), angles (...) and its size
+    (width, length, ...; the setup's object_size): its edges, e.g. to find where the hand touches it."""
     pos, angle = np.asarray(pos, dtype=np.float64), np.asarray(angle, dtype=np.float64)
-    across = np.stack([np.cos(angle), np.sin(angle)], axis=-1)[..., None, :] * WALLET[0] / 2
-    along = np.stack([-np.sin(angle), np.cos(angle)], axis=-1)[..., None, :] * WALLET[1] / 2
+    across = np.stack([np.cos(angle), np.sin(angle)], axis=-1)[..., None, :] * size[0] / 2
+    along = np.stack([-np.sin(angle), np.cos(angle)], axis=-1)[..., None, :] * size[1] / 2
     signs = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]], dtype=np.float64)
     return pos[..., None, :] + signs[:, :1] * across + signs[:, 1:] * along
 
 
-def lift(points: np.ndarray, nadir: np.ndarray, height: float) -> np.ndarray:
-    """Seen table cm -> true table cm of points `height` cm above the table (the height fix)."""
-    return nadir + (np.asarray(points) - nadir) * (CAMERA_HEIGHT - height) / CAMERA_HEIGHT
+def lift(points: np.ndarray, nadir: np.ndarray, height: float, camera: float) -> np.ndarray:
+    """Seen table cm -> true table cm of points `height` cm above the table, the camera being `camera` cm above
+    it (the height fix)."""
+    return nadir + (np.asarray(points) - nadir) * (camera - height) / camera
 
 
 def _scan(video: Path, take: clips.Take, model: Path):
@@ -241,14 +238,16 @@ def _scan(video: Path, take: clips.Take, model: Path):
     return stills, hands
 
 
-def _palm_path(hand: dict[int, np.ndarray], times: np.ndarray, clap: float, picks: np.ndarray, nadir: np.ndarray):
-    """The palm path at the clip's frames (video frames `picks`) from the landmarks found per video frame."""
+def _palm_path(hand: dict[int, np.ndarray], times: np.ndarray, clap: float, picks: np.ndarray, nadir: np.ndarray,
+               camera: float):
+    """The palm path at the clip's frames (video frames `picks`) from the landmarks found per video frame, the
+    camera `camera` cm above the table."""
     t = len(picks)
     if not hand:
         nan = np.full((t, 2), np.nan)
         return dict(palm=nan, palm_seen=np.zeros(t, bool), hand_direction=nan, entered=np.nan, left=np.nan, kept=0)
     found = np.array(sorted(hand))
-    landmarks = lift(np.stack([hand[i] for i in found]), nadir, PALM_HEIGHT)
+    landmarks = lift(np.stack([hand[i] for i in found]), nadir, PALM_HEIGHT, camera)
     palm = landmarks[:, PALM].mean(axis=1)
     direction = landmarks[:, MIDDLE_BASE] - landmarks[:, WRIST]
     direction /= np.linalg.norm(direction, axis=1, keepdims=True)
@@ -276,16 +275,16 @@ def _palm_path(hand: dict[int, np.ndarray], times: np.ndarray, clap: float, pick
     )
 
 
-def _track_object(frames: np.ndarray, timestamps: np.ndarray, nadir: np.ndarray):
-    """The wallet in each straightened frame: its centre and angle after the height fix, filled in time where it
-    is not seen (not found, or partly hidden by the hand), and its seen footprint."""
+def _track_object(frames: np.ndarray, timestamps: np.ndarray, nadir: np.ndarray, setup: Setup):
+    """The object in each straightened frame: its centre and angle after the height fix, filled in time where it
+    is not seen (not found, or partly hidden by the hand), and the size of its top face."""
     n = len(frames)
     pos, angle, size, area = np.full((n, 2), np.nan), np.full(n, np.nan), np.full((n, 2), np.nan), np.zeros(n)
     for t, frame in enumerate(frames):
-        found = _find_object(frame)
+        found = _find_object(frame, setup)
         if found is not None:
             corners, area[t] = found
-            pos[t], angle[t], size[t] = _pose(lift(corners, nadir, WALLET[2]))
+            pos[t], angle[t], size[t] = _pose(lift(corners, nadir, setup.object_size[2], setup.camera_height))
     seen = np.isfinite(angle)
     if seen.any():
         seen &= area >= OCCLUDED * np.median(area[seen])
@@ -300,24 +299,24 @@ def _track_object(frames: np.ndarray, timestamps: np.ndarray, nadir: np.ndarray)
     )
 
 
-def _find_object(frame: np.ndarray) -> tuple[np.ndarray, float] | None:
-    """The wallet's seen outline in a straightened frame: the corners (4, 2) of the minimum-area rectangle around
-    the largest dark, not orange region of about its size, in table cm, and that region's area in px; None if
-    there is none."""
-    rgb = frame.astype(np.int16)
-    mask = ((rgb.max(axis=-1) < DARK) & (rgb[..., 0] - rgb[..., 2] < WARM)).astype(np.uint8)
+def _find_object(frame: np.ndarray, setup: Setup) -> tuple[np.ndarray, float] | None:
+    """The object's top face as seen in a straightened frame: the corners (4, 2) of the minimum-area rectangle
+    around the largest region of the setup's object pixels of about its size, in table cm, and that region's area
+    in px; None if there is none. The opening drops specks (e.g. the carpet's pale flecks)."""
+    mask = setup.object_pixels(frame).astype(np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     px = clips.SIZE / clips.WORKSPACE  # px per cm
+    width, length = setup.object_size[:2]
     for label in 1 + np.argsort(stats[1:, cv2.CC_STAT_AREA])[::-1]:
-        if stats[label, cv2.CC_STAT_AREA] < 0.25 * WALLET[0] * WALLET[1] * px**2:
+        if stats[label, cv2.CC_STAT_AREA] < 0.25 * width * length * px**2:
             break
         ys, xs = np.nonzero(labels == label)
         centre, (w, h), angle = cv2.minAreaRect(np.stack([xs, ys], axis=1).astype(np.float32))
         # The rectangle runs through pixel centres: the region's outline is one pixel wider each way.
         rect = ((centre[0] + 0.5, centre[1] + 0.5), (w + 1, h + 1), angle)
         sides = np.sort([w + 1, h + 1]) / px
-        if np.all(np.abs(sides - np.sort(WALLET[:2])) < SHAPE_TOLERANCE):
+        if np.all(np.abs(sides - np.sort([width, length])) < SHAPE_TOLERANCE):
             return cv2.boxPoints(rect).astype(np.float64) / px, float(stats[label, cv2.CC_STAT_AREA])
     return None
 
@@ -334,12 +333,15 @@ def _pose(corners: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
 
 
 def sheet_size(image: np.ndarray, clip: clips.Clip) -> np.ndarray:
-    """The A4 sheet's long and short side in table cm, in a raw video frame where no hand covers it.
+    """The A4 sheet's long and short side in table cm, in a raw video frame where no hand covers it. A side that
+    the frame's edge cuts is NaN.
 
-    The sheet is the large pale, unsaturated region around the marker (the wood is orange); its outline is the
-    convex hull, so the marker's black squares inside it do not matter."""
+    The sheet is the large pale, unsaturated region around the marker (the wood is orange, the carpet dark; an
+    opening drops the carpet's pale flecks). Its outline is the convex hull, so the marker's black squares
+    inside it do not matter."""
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
     pale = ((hsv[..., 1] < 45) & (hsv[..., 2] > 120)).astype(np.uint8)
+    pale = cv2.morphologyEx(pale, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     pale = cv2.morphologyEx(pale, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
     _, labels, _, _ = cv2.connectedComponentsWithStats(pale)
     # The sheet: the pale region just outside the marker's black border (0.7 cm out; the sheet's margin is 1.5 cm).
@@ -350,5 +352,15 @@ def sheet_size(image: np.ndarray, clip: clips.Clip) -> np.ndarray:
     sheet = np.bincount(around[around > 0]).argmax()
     ys, xs = np.nonzero(labels == sheet)
     hull = cv2.convexHull(np.stack([xs, ys], axis=1).astype(np.float32)).reshape(-1, 2)
-    _, (w, h), _ = cv2.minAreaRect(clip.to_cm(hull.astype(np.float64)).astype(np.float32))
-    return np.array([max(w, h), min(w, h)])
+    rect = cv2.minAreaRect(clip.to_cm(hull.astype(np.float64)).astype(np.float32))
+    edges = np.diff(cv2.boxPoints(rect)[:3], axis=0)  # two adjacent edges: the rectangle's two sides
+    sides = np.linalg.norm(edges, axis=1)
+    # Cut by the frame's edge: the sheet's pixels on the frame's border all lie at one end of that side.
+    border = (xs == 0) | (ys == 0) | (xs == image.shape[1] - 1) | (ys == image.shape[0] - 1)
+    cut = np.zeros(2, bool)
+    if border.any():
+        on_edge = clip.to_cm(np.stack([xs[border], ys[border]], axis=1).astype(np.float64))
+        reach = np.abs((on_edge - rect[0]) @ (edges / sides[:, None]).T)  # distance from the centre along each side
+        cut = np.median(reach, axis=0) > sides / 2 - 1.0
+    order = np.argsort(-sides)  # the long side first
+    return np.where(cut, np.nan, sides)[order]

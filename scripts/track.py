@@ -1,8 +1,9 @@
 """Takes -> tracked episodes, with a check report, overlay GIFs and a static-baseline report.
 
 Every take (*.mp4) in the dataset's raw folder (Friday's takes: <root>/clips/raw/) is cut into clips, and the
-palm and the wallet are tracked in each. The episodes go to <root>/<dataset>/episodes/ and the checks to
-<root>/<dataset>/tracking/: report.md and one <take>.gif per take (palm and wallet drawn on the straightened
+palm and the object are tracked in each. All takes are in one setup, SETUP (camera height, object, square; see
+pwm.datasets.setups). The episodes go to <root>/<dataset>/episodes/ and the checks to
+<root>/<dataset>/tracking/: report.md and one <take>.gif per take (palm and object drawn on the straightened
 frames). Then the toy encoder gives a static-baseline report in <root>/<dataset>/toy/.
 
     uv run python scripts/track.py                              # Friday's takes
@@ -16,9 +17,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from pwm import stages
-from pwm.datasets import clips, tracking
+from pwm.datasets import clips, setups, tracking
 from pwm.evaluator import STATIC
 
+SETUP = setups.CARPET  # the real takes: the white box on the carpet
 GIF_SIZE = 256
 SEEN, NOT_SEEN = (40, 220, 40), (150, 150, 150)
 
@@ -35,10 +37,10 @@ assert videos, f"no takes (*.mp4) in {raw}"
 
 
 def overlay(clip: tracking.TrackedClip, path) -> None:
-    """The clip's straightened frames with the wallet's footprint and the palm drawn on, frames after the hand
+    """The clip's straightened frames with the object's footprint and the palm drawn on, frames after the hand
     left dimmed. Grey marks: not seen in that frame (held or filled)."""
     scale = GIF_SIZE / clips.WORKSPACE
-    corners = tracking.object_corners(clip.object_pos, clip.object_angle) * scale
+    corners = tracking.object_corners(clip.object_pos, clip.object_angle, SETUP.object_size) * scale
     frames = []
     for t, image in enumerate(clip.frames):
         im = Image.fromarray(image).resize((GIF_SIZE, GIF_SIZE), Image.LANCZOS)
@@ -63,7 +65,7 @@ tracked, failed = [], []
 for video in videos:
     print(f"Tracking {video.name} ...", flush=True)
     try:
-        take = tracking.track_take(video, models=root / "models")
+        take = tracking.track_take(video, models=root / "models", setup=SETUP)
     except Exception as error:  # one bad take must not stop the others
         traceback.print_exc()
         failed.append((video.name, str(error)))
@@ -84,6 +86,14 @@ usable = [t for t in tracked if t.problem is None]
 kinds = [t.kind for t in usable]
 sheets = np.array([t.sheet for t in tracked])
 sizes = np.array([t.object_size for t in usable])
+width, length, height = SETUP.object_size
+
+
+def cm(value: float) -> str:
+    """A measured side, or "cut" where the frame's edge cuts it."""
+    return "cut" if np.isnan(value) else f"{value:.1f}"
+
+
 lines = [
     f"# Tracking: {args.dataset}",
     "",
@@ -96,33 +106,38 @@ if failed:
     lines += ["**Takes that failed:**", "", *[f"- {name}: {error}" for name, error in failed], ""]
 if len(tracked):
     error = sheets - tracking.SHEET
+    measured = [
+        f"{name} side {np.nanmean(sheets[:, k]):.2f} cm (error {np.nanmean(error[:, k]):+.2f}, worst "
+        f"{np.nanmax(np.abs(error[:, k])):.2f}, in {np.isfinite(sheets[:, k]).sum()} clips)"
+        for k, name in enumerate(["long", "short"]) if np.isfinite(sheets[:, k]).any()
+    ]
     lines += [
         "## Pixel-to-cm check: the A4 sheet",
         "",
         f"The sheet under the marker, {tracking.SHEET[0]} x {tracking.SHEET[1]} cm, measured in each clip's "
-        f"hand-free second: {sheets[:, 0].mean():.2f} x {sheets[:, 1].mean():.2f} cm on average; error "
-        f"{error[:, 0].mean():+.2f} / {error[:, 1].mean():+.2f} cm (long / short side), worst "
-        f"{np.abs(error).max():.2f} cm.",
+        f"hand-free second (a side the frame's edge cuts is left out): {'; '.join(measured) or 'cut in every clip'}.",
         "",
     ]
 if len(usable):
+    error = np.abs(sizes - [width, length])
     lines += [
-        "## Wallet footprint",
+        "## Pixel-to-cm check: the object's top face",
         "",
-        f"Seen footprint (width x length, after the 2 cm height fix), median per clip: {sizes[:, 0].mean():.2f} x "
-        f"{sizes[:, 1].mean():.2f} cm on average, spread across clips {np.ptp(sizes[:, 0]):.2f} x "
-        f"{np.ptp(sizes[:, 1]):.2f} cm. Used everywhere: {tracking.WALLET[0]:g} x {tracking.WALLET[1]:g} cm.",
+        f"The object is rigid, {width:g} x {length:g} x {height:g} cm by ruler. Its top face (width x length, after "
+        f"the {height:g} cm height fix), median per clip: {sizes[:, 0].mean():.2f} x {sizes[:, 1].mean():.2f} cm on "
+        f"average, worst error {error.max():.2f} cm, spread across clips {np.ptp(sizes[:, 0]):.2f} x "
+        f"{np.ptp(sizes[:, 1]):.2f} cm.",
         "",
     ]
 lines += [
     "## Clips",
     "",
     "Times are seconds after the clap. Hand in / out: first and last frame MediaPipe finds the hand (the episode "
-    "ends at the last). Palm seen: clip frames where the hand was found. Moved: the wallet's start-to-end "
-    f"distance (push above {tracking.MOVED:g} cm). Start pose: the wallet's centre (cm) and angle (degrees).",
+    "ends at the last). Palm seen: clip frames where the hand was found. Moved: the object's start-to-end "
+    f"distance (push above {tracking.MOVED:g} cm). Start pose: the object's centre (cm) and angle (degrees).",
     "",
-    "| clip | kind | split | moved (cm) | hand in | hand out | frames kept | palm seen | wallet seen "
-    "| wallet footprint (cm) | start pose | A4 sheet (cm) | flags |",
+    "| clip | kind | split | moved (cm) | hand in | hand out | frames kept | palm seen | object seen "
+    "| top face (cm) | start pose | A4 sheet (cm) | flags |",
     "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---|",
 ]
 for t in tracked:
@@ -133,9 +148,9 @@ for t in tracked:
         flags.append("hand still in view at the 6 s cap")
     if t.drift_px > clips.MAX_DRIFT:
         flags.append(f"camera moved {t.drift_px:.1f} px during the clip")
+    sheet = f"{cm(t.sheet[0])} x {cm(t.sheet[1])}"
     if t.problem:
-        lines.append(f"| {t.name} | - | - | - | - | - | - | - | - | - | - | {t.sheet[0]:.1f} x {t.sheet[1]:.1f} "
-                     f"| {'; '.join(flags)} |")
+        lines.append(f"| {t.name} | - | - | - | - | - | - | - | - | - | - | {sheet} | {'; '.join(flags)} |")
         continue
     k = t.kept
     x, y = t.object_pos[0]
@@ -143,7 +158,7 @@ for t in tracked:
         f"| {t.name} | {t.kind} | {split[t.name]} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "
         f"| {t.palm_seen[:k].sum()}/{k} | {t.object_seen[:k].sum()}/{k} "
         f"| {t.object_size[0]:.1f} x {t.object_size[1]:.1f} | ({x:.1f}, {y:.1f}), {np.degrees(t.object_angle[0]):.0f} "
-        f"| {t.sheet[0]:.1f} x {t.sheet[1]:.1f} | {'; '.join(flags) or '-'} |"
+        f"| {sheet} | {'; '.join(flags) or '-'} |"
     )
 
 # The static baseline through the toy encoder: the episodes flow through the chain.

@@ -1,7 +1,8 @@
 """Seam B for clip cutting: a take (phone video) -> clips cut at the claps, straightened to the table square.
 
-Slow: runs on the 3-clip test take in $PWM_DATA/clips/test-take (else ./data/clips/test-take). That take is a
-setup check only, never project data. Expected values below were read off the take by eye and ear (16 Oct).
+Slow: runs on the 3-clip morning test take (the wallet on wood, setup WOOD) in $PWM_DATA/clips/test-take (else
+./data/clips/test-take). That take is a setup check only, never project data. Expected values below were read off
+the take by eye and ear (16 Oct). It is the take with a camera step between clips, so it stays the cutting check.
 """
 
 import av
@@ -9,7 +10,7 @@ import numpy as np
 import pytest
 
 from pwm import stages
-from pwm.datasets import clips
+from pwm.datasets import clips, setups
 
 pytestmark = pytest.mark.slow
 
@@ -21,7 +22,7 @@ def take():
     video = stages.data_root() / "clips" / TEST_TAKE
     if not video.exists():
         pytest.skip(f"needs the test take at {video}")
-    return clips.cut_take(video)
+    return clips.cut_take(video, setups.WOOD.square)
 
 
 def test_the_three_claps_are_found(take):

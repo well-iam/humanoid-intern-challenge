@@ -6,12 +6,12 @@ there: the test take has only 3 clips, and Friday's takes are recorded after thi
 
 import numpy as np
 
-from pwm.datasets import tracking
+from pwm.datasets import setups, tracking
 from pwm.episodes import load_episodes, save_episodes
 
 
 def made_up_clip(name: str, moved: float, n: int = 12) -> tracking.TrackedClip:
-    """A tracked clip whose wallet slides `moved` cm along x while the hand is in view."""
+    """A tracked clip whose object slides `moved` cm along x while the hand is in view."""
     t = np.arange(n) / 8
     object_pos = np.stack([10 + moved * np.clip(t - 0.5, 0, 0.5) / 0.5, np.full(n, 20.0)], axis=1)
     return tracking.TrackedClip(
@@ -23,7 +23,7 @@ def made_up_clip(name: str, moved: float, n: int = 12) -> tracking.TrackedClip:
         object_pos=object_pos,
         object_angle=np.zeros(n),
         object_seen=np.ones(n, bool),
-        object_size=np.array(tracking.WALLET[:2]),
+        object_size=np.array(setups.CARPET.object_size[:2]),
         palm=object_pos + [0, 9],
         palm_seen=t >= 0.25,
         hand_direction=np.tile([0.0, -1.0], (n, 1)),
@@ -41,7 +41,7 @@ def friday(n_push: int = 30, n_near_miss: int = 10) -> list[tracking.TrackedClip
             for k, i in enumerate(order)]
 
 
-def test_the_wallet_moving_more_than_1_cm_makes_a_push():
+def test_the_object_moving_more_than_1_cm_makes_a_push():
     episodes = tracking.to_episodes([made_up_clip("a", 1.5), made_up_clip("b", 0.6)])
     assert [ep.kind for ep in episodes] == ["push", "near-miss"]
 
@@ -65,13 +65,13 @@ def test_a_small_set_holds_out_at_most_half_of_each_kind():
     assert held_out == ["push"]
 
 
-def test_the_wallets_footprint_is_11_cm_across_and_13_cm_along_table_y_at_angle_0():
-    corners = tracking.object_corners([20.0, 30.0], 0.0)
-    np.testing.assert_allclose(corners.min(axis=0), [14.5, 23.5])
-    np.testing.assert_allclose(corners.max(axis=0), [25.5, 36.5])
+def test_the_boxs_footprint_is_5_8_cm_across_and_17_8_cm_along_table_y_at_angle_0():
+    corners = tracking.object_corners([20.0, 30.0], 0.0, size=(5.8, 17.8, 3.0))
+    np.testing.assert_allclose(corners.min(axis=0), [17.1, 21.1])
+    np.testing.assert_allclose(corners.max(axis=0), [22.9, 38.9])
     # A quarter turn lays the long side along table x.
-    turned = tracking.object_corners([20.0, 30.0], np.pi / 2)
-    np.testing.assert_allclose(np.ptp(turned, axis=0), [13.0, 11.0])
+    turned = tracking.object_corners([20.0, 30.0], np.pi / 2, size=(5.8, 17.8, 3.0))
+    np.testing.assert_allclose(np.ptp(turned, axis=0), [17.8, 5.8])
 
 
 def test_the_tracks_kept_next_to_the_positions_survive_saving_and_loading(tmp_path):

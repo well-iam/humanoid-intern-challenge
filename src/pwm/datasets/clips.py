@@ -8,7 +8,8 @@
   cm) comes from the marker's corners averaged over the hand-free second after its clap; the other frames
   only check that the camera stayed still (drift) and that it did not move since the previous clip (step).
 - Straightening: every clip frame is warped to the 50 x 50 cm table square, SIZE px a side, in the
-  camera's orientation. Table cm: origin at the view's top-left corner, x to the right, y down.
+  camera's orientation. Table cm: origin at the view's top-left corner, x to the right, y down. Where the
+  square lies next to the marker depends on the setup (pwm.datasets.setups).
 """
 
 from collections import defaultdict
@@ -19,11 +20,8 @@ import av
 import cv2
 import numpy as np
 
-# The table square, in the marker's own frame as printed (origin at its top-left corner, x toward its right
-# edge, y toward its bottom edge, cm), corner by corner in view order: top-left, top-right, bottom-right,
-# bottom-left. It starts 5 cm beyond the marker's top edge and is shifted 10 cm toward its left edge, so it
-# fits the 77 cm camera's view; the view keeps the camera's orientation (the hand comes in from the bottom).
-SQUARE = np.array([[24.0, -55.0], [24.0, -5.0], [-26.0, -5.0], [-26.0, -55.0]])
+from pwm.datasets import setups
+
 WORKSPACE = 50.0  # cm, the square's side
 SIZE = 512  # px, the straightened view's side (10.24 px per cm); the encoders resize it themselves
 MARKER_SIDE = 18.0  # cm, measured on the print
@@ -84,8 +82,9 @@ class Take:
     frame_times: np.ndarray  # (N,) every video frame's time, seconds into the take
 
 
-def cut_take(video: str | Path, size: int = SIZE) -> Take:
-    """Cut a take into clips and straighten their frames to `size` x `size` px views of the table square."""
+def cut_take(video: str | Path, square=setups.CARPET.square, size: int = SIZE) -> Take:
+    """Cut a take into clips and straighten their frames to `size` x `size` px views of the table square
+    (`square`: its corners in the marker's frame, see setups.Setup)."""
     video = Path(video)
     times, level = _loudness(video)
     claps = _claps(times, level)
@@ -108,7 +107,7 @@ def cut_take(video: str | Path, size: int = SIZE) -> Take:
         if not f:
             raise ValueError(f"{video.name}: no marker in the hand-free second after the clap at {clap:.2f} s")
     references = [np.mean(f, axis=0) for f in found]
-    image_to_table = [_image_to_table(reference) for reference in references]
+    image_to_table = [_image_to_table(reference, square) for reference in references]
 
     # Second pass: straighten each clip frame with its clip's homography.
     owners = defaultdict(list)  # frame -> clips that use it (at most two, where a clip ends at the next clap)
@@ -148,11 +147,13 @@ def cut_take(video: str | Path, size: int = SIZE) -> Take:
     )
 
 
-def _image_to_table(corners: np.ndarray) -> np.ndarray:
-    """The homography from image px to table cm, given the marker's corners in the image."""
+def _image_to_table(corners: np.ndarray, square) -> np.ndarray:
+    """The homography from image px to table cm, given the marker's corners in the image and the square's in
+    the marker's frame."""
     marker = (MARKER_SIDE * UNIT_SQUARE).astype(np.float32)
     marker_to_image = cv2.getPerspectiveTransform(marker, corners.astype(np.float32))
-    square = cv2.perspectiveTransform(SQUARE.reshape(-1, 1, 2), marker_to_image).astype(np.float32)
+    square = np.asarray(square, dtype=np.float64).reshape(-1, 1, 2)
+    square = cv2.perspectiveTransform(square, marker_to_image).astype(np.float32)
     return cv2.getPerspectiveTransform(square, (WORKSPACE * UNIT_SQUARE).astype(np.float32))
 
 

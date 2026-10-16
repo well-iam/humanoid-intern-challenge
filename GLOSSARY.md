@@ -5,7 +5,7 @@ An action-conditioned world model: given what the scene looks like and how the p
 ## Data
 
 **Object**:
-The thing being pushed: a wallet in the clips, a T-shaped block in the reference dataset, a body of the same shape in the simulator.
+The thing being pushed: a white box in the clips, a T-shaped block in the reference dataset, a body of the same shape in the simulator.
 _Avoid_: Box, wallet, block
 
 **Pusher**:
