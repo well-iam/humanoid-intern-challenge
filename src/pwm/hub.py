@@ -2,7 +2,8 @@
 
 It holds my clips (720p H.264 copies of the takes, and the episodes: tracks plus the straightened frames), the
 tracks as one table, the held-out split, and for both datasets the cached embeddings, trained predictors,
-results and replays that the figures need. It never holds the test takes (setup checks only) or Push-T itself
+results and replays that the figures need (but not the V-JEPA 2 embeddings: V-JEPA 2 lost to DINOv2, and its
+embeddings are only needed to retrain it). It never holds the test takes (setup checks only) or Push-T itself
 (the notebook fetches Push-T from its original URL).
 """
 
@@ -33,7 +34,10 @@ PUBLIC = [  # paths relative to the run root
     "pusht/logs/train-*.log",
     "pusht/logs/seeds/train-*.log",
 ]
-NEVER = ["*.partial.npy"]
+NEVER = [
+    "*.partial.npy",
+    "pusht/vjepa2/embeddings/*",  # 9.3 GB, only needed to retrain the losing encoder
+]
 VIDEO_HEIGHT = 720
 
 

@@ -227,6 +227,7 @@ def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
         stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3, seed=seed)
         stages.evaluate("toy", "toy", root=tmp_path, seed=seed)
     stages.near_miss("toy", "toy", root=tmp_path)
+    stages.probe_scaling("toy", "toy", root=tmp_path, sizes=[5])
     for path in [*tmp_path.rglob("*.png"), *tmp_path.rglob("*.npz"), *tmp_path.rglob("*.npy"), *tmp_path.rglob("*.pt")]:
         path.unlink()
 
@@ -234,7 +235,7 @@ def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
 
     folder = tmp_path / "toy" / "toy"
     expected = {folder / "error-vs-horizon.png", folder / "seed-1" / "error-vs-horizon.png",
-                folder / "error-vs-horizon-seeds.png", folder / "near-miss.png"}
+                folder / "error-vs-horizon-seeds.png", folder / "near-miss.png", folder / "probe-scaling.png"}
     assert set(drawn) == expected
     assert all(path.read_bytes().startswith(b"\x89PNG") for path in expected)
 

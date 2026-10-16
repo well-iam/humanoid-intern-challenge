@@ -451,9 +451,9 @@ def rank(
 
 def redraw(root: str | Path | None = None) -> list[Path]:
     """Redraw every figure that comes from saved results alone (results.json, near-miss.json,
-    ranking.json), with no episodes, embeddings or predictors: each run's error-vs-horizon.png,
-    each dataset's encoder comparison (if it has several evaluated encoders), each encoder's
-    seed comparison, the near-miss test and the ranking test. Returns the figures drawn."""
+    ranking.json, probe-scaling.json), with no episodes, embeddings or predictors: each run's
+    error-vs-horizon.png, each dataset's encoder comparison (if it has several evaluated encoders),
+    each encoder's seed comparison, the near-miss test, the ranking test and the probe-scaling curve. Returns the figures drawn."""
     drawn = []
     for dataset in sorted(p for p in data_root(root).iterdir() if p.is_dir()):
         evaluated = {}
@@ -474,6 +474,9 @@ def redraw(root: str | Path | None = None) -> list[Path]:
             if (run / "near-miss.json").exists():
                 plot_near_miss(NearMiss.load(run), run / "near-miss.png", f"{name}, {dataset.name}")
                 drawn.append(run / "near-miss.png")
+            if (run / "probe-scaling.json").exists():
+                plot_probe_scaling(json.loads((run / "probe-scaling.json").read_text()), run / "probe-scaling.png")
+                drawn.append(run / "probe-scaling.png")
             if (run / "ranking" / "ranking.json").exists():
                 plot_ranking(RankingReport.load(run / "ranking"), run / "ranking" / "ranking.png", name)
                 drawn.append(run / "ranking" / "ranking.png")

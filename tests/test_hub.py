@@ -22,8 +22,9 @@ KEPT = [
     "pusht/dinov2/embeddings/pusht-000.npy",
     "pusht/dinov2/seed-1/predictor.pt",
     "pusht/dinov2/ranking/ranking.json",
-    "pusht/vjepa2/embeddings/pusht-000.npy",
-    "pusht/vjepa2/results.json",
+    "pusht/vjepa2/results.json",  # the losing encoder: its results, predictors and figures, not its embeddings
+    "pusht/vjepa2/predictor.pt",
+    "pusht/vjepa2/error-vs-horizon.png",
     "pusht/winner.json",
     "pusht/judge/noise-floor.json",
     "pusht/panda/pusht-002.gif",
@@ -41,13 +42,14 @@ LEFT_OUT = [
     "pusht/episodes/pusht-000.npz",
     "pusht/dinov2/embeddings/pusht-001.partial.npy",  # an interrupted write
     "models/mediapipe/hand_landmarker.task",
+    "pusht/vjepa2/embeddings/pusht-000.npy",  # 9.3 GB, only needed to retrain the losing encoder
     "clips/dinov2-30clips/embeddings/VID_1-01.npy",  # the same as clips/dinov2/embeddings
     "clips/episodes-30clips/VID_1-01.npz",  # the same as clips/episodes
     "clips/tracking-30clips/report.md",
 ]
 
 
-def test_the_public_dataset_holds_my_clips_and_both_runs_but_no_test_takes_and_no_push_t_source(tmp_path):
+def test_the_public_dataset_holds_my_clips_and_results_but_no_test_takes_push_t_source_or_v_jepa_2_embeddings(tmp_path):
     for path in KEPT + LEFT_OUT:
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / path).write_text(path)

@@ -4,10 +4,9 @@ I trained a small world model that predicts where a pushed object will go, check
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/well-iam/humanoid-intern-challenge/blob/main/notebooks/pushing_world_model.ipynb)
 
-<!-- UPDATE: gif-strip.gif is redrawn by scripts/gif_strip.py after the new run. Its default clip is the first held-out push with its own contact shift; the held-out split changes with more takes, so the clip name in this caption may change too. -->
 ![My clip, the model's prediction, the Panda replay](assets/gif-strip.gif)
 
-Left: one of my held-out clips (palm in green). Middle: what the predictor expected 1 s earlier, from the frames it had then and my real palm moves. A prediction is a feature vector, not an image, so I show the training frame whose features are closest to it. Right: the Panda replaying my palm path in MuJoCo.
+Left: one of my held-out clips (palm in green). Middle: what the predictor expected 1 s earlier, from the frames it had then and my real palm moves. A prediction is a feature vector, not an image, so I show the training frame whose features are closest to it. Right: the Panda replaying my palm path in MuJoCo. The clip is not the best one: of the 3 held-out pushes where I know where the palm was at contact, it is the one with the median replay error (4.5 cm; the box also ends 41° off).
 
 ## The idea
 
@@ -65,70 +64,72 @@ Why: the top pick is where the model is most wrong in the hopeful direction. For
 
 ## My data
 
-<!-- UPDATE: every number and figure in this section comes from the first 30 clips (ticket 14 and 15). The new run with about 120 clips replaces them; the 30-clip run stays in pwm-data/clips/dinov2-30clips/. -->
+I recorded 9 takes: my hand pushing a white box (17.8 × 5.8 × 3 cm) on a carpet, filmed from above by a phone 71 cm up. Each clip starts at a clap, so I never touched the phone during a take. The claps cut the takes into 119 clips. I dropped 4 of them, where my hand came back to reset the box. That leaves 115 clips: 80 pushes and 35 near-misses, where my hand passes the box without touching it.
 
-I recorded <!-- UPDATE: clip count, takes -->30 clips in 3 takes<!-- /UPDATE -->: my hand pushing a white box (17.8 × 5.8 × 3 cm) on a carpet, filmed from above by a phone 71 cm up. <!-- UPDATE: push / near-miss / held-out counts -->22 are pushes and 8 are near-misses, where my hand passes the box without touching it. 8 clips (6 pushes, 2 near-misses) are held out.<!-- /UPDATE --> Each clip starts at a clap, so I never touched the phone during a take.
+18 clips are held out: 10 pushes and 8 near-misses. 8 of them are the held-out clips of my first 3 takes, fixed before I trained anything. The other 10 are drawn with a fixed seed from the 6 later takes. The other 97 clips train the models.
 
 From video to data:
 - A printed ArUco marker gives the table plane. Each frame is straightened to a 50 × 50 cm square, at 8 frames per second.
 - MediaPipe finds the hand; the pusher position is the centre of the palm.
-- The box is the bright rectangle of the right size. Its measured top face is within <!-- UPDATE: tracking report -->0.33 cm<!-- /UPDATE --> of the ruler size, so the pixel-to-cm error is a few mm.
+- A clip ends when the hand has been out of view for 0.75 s. Otherwise a clip could include my hand coming back to reset the box.
+- The box is the bright rectangle of the right size.
+- Pixel-to-cm check: the A4 sheet under the marker measures within 0.28 cm of its true size wherever it is seen, and the box's top face within 0.77 cm (5.80 × 17.94 cm on average, ruler 5.8 × 17.8).
 
-Same chain and training recipe as Push-T, with a step of 0.25 s. Nothing was changed after seeing held-out numbers.
+Same chain and training recipe as Push-T, with a step of 0.25 s. Nothing was tuned on held-out numbers.
 
-<!-- UPDATE: assets/clips-error-vs-horizon.png from pwm-data/clips/dinov2/error-vs-horizon.png -->
+**A first run on 30 clips failed both gates. More data fixed that.** I first trained on my first 3 takes only (22 training clips). Then I recorded 6 more takes and reran the same chain. The 8 held-out clips of the first run are still held out, so I can compare on the same clips.
+
 ![Error vs horizon on my clips](assets/clips-error-vs-horizon.png)
 
-Error on held-out moving windows, cm:
+Error at 4 steps (1 s) ahead on held-out moving windows, cm:
 
-<!-- UPDATE: fill the ~120 clips column from pwm-data/clips/dinov2/report.md; the 30 clips column comes from pwm-data/clips/dinov2-30clips/report.md -->
-| | 30 clips, 1 s | 30 clips, 2 s | ~120 clips, 1 s | ~120 clips, 2 s |
-|---|---:|---:|---:|---:|
-| probe on real frames (Gate 1: under 2 cm) | 3.49 | | TBD | |
-| predictor | **3.78** | **4.96** | TBD | TBD |
-| action-blind predictor | 4.46 | 6.02 | TBD | TBD |
-| static baseline | 5.83 | 10.12 | TBD | TBD |
-| reversed pusher moves | 5.29 | 8.98 | TBD | TBD |
-| shuffled pusher moves | 4.42 | 7.41 | TBD | TBD |
-| validation gate (pass mark) | fail (3.57) | | TBD | |
+| | first run: 22 training clips, 8 held-out | 97 training clips, same 8 held-out | 97 training clips, all 18 held-out |
+|---|---:|---:|---:|
+| probe on real frames (Gate 1: under 2 cm) | 3.49 (fail) | 1.72 (pass) | 1.24 (pass) |
+| predictor | **3.78** | **3.15** | **2.82** |
+| action-blind predictor | 4.46 | 4.61 | 4.16 |
+| static baseline | 5.83 | 6.34 | 6.67 |
+| reversed pusher moves | 5.29 | 6.45 | 6.43 |
+| shuffled pusher moves | 4.42 | 5.10 | 5.06 |
+| validation gate (pass mark) | fail (3.57) | pass (3.69) | pass (3.33) |
 
-<!-- UPDATE: all numbers in the next three bullets -->
-- The predictor halves the static baseline's error at 2 s (4.96 vs 10.12 cm), and beats it at 1 s in all 6 held-out push clips. Wrong pusher moves make it worse.
-- It is only 15% below the action-blind predictor, and the gate asks for 20%. Resampling the 6 held-out push clips puts the ratio at 0.85 (95% interval 0.78 to 0.92).
-- **Gate 1 fails:** the probe is off by 3.49 cm on real frames. This error sits under every number above.
+- **Both gates now pass.** On all 18 held-out clips the predictor is 32% below the action-blind predictor (20% needed) and 58% below the static baseline. It beats the action-blind predictor in all 10 held-out push clips. Resampling those 10 clips puts the ratio at 0.68 (95% interval 0.62 to 0.74).
+- On the first run it was only 15% below the action-blind predictor (ratio 0.85, 95% interval 0.78 to 0.92, over 6 clips).
+- Wrong pusher moves hurt more than before. Reversed moves now put the error at the static baseline's level (6.43 vs 6.67 cm). So the predictor leans on the actions more.
+- At 8 steps (2 s) ahead, on all 18: predictor 4.02 cm, action-blind 5.96, static 11.84.
+- The static baseline got worse with more data on the same 8 clips (5.83 to 6.34 cm). The static baseline is the probe on the current frame. My guess: the first run's weaker probe pulled every position toward the middle, which hid part of the motion.
 
-The probe got better with every clip I added. Cross-validated on the training clips: 6.27 cm with 6 clips, 4.86 with 9, 3.71 with 12, 3.38 with 15, 3.17 with 17. Feeding DINOv2 448 px frames instead of 224 px did not help (3.15 vs 3.04 cm). So I recorded more clips.
+**Why more clips helped: the probe.** With 22 training clips, the probe read the box's position 3.49 cm off on real frames, and this error sat under every number. Feeding DINOv2 448 px frames instead of 224 px did not help (3.15 vs 3.04 cm). More clips did:
 
-<!-- UPDATE: add assets/probe-vs-clips.png (probe error vs number of training clips, 30-clip and ~120-clip runs) once the new run draws it, and add it to ASSETS in scripts/readme_assets.py, then uncomment the line below (left commented so GitHub shows no broken image)
-![Probe error vs number of training clips](assets/probe-vs-clips.png)
--->
+![Probe error vs number of training clips](assets/probe-scaling.png)
 
+This is 5-fold cross-validation over the 97 training clips (held-out clips never used). The probe crosses the 2 cm mark between 24 and 48 clips. One caveat: the folds mix clips of the same take, so the curve may flatter a bit. The held-out numbers (1.72 and 1.24 cm) agree with it.
 
 **Near-miss test.** When my hand passes the box without touching it, the box should not move.
 
-<!-- UPDATE: assets/near-miss.png and the numbers below -->
 ![Near-miss test](assets/near-miss.png)
 
-At 1 s, the predictor moves the box 2.37 cm on near-miss windows. The probe's own jitter on the real frames is 1.60 cm, and the action-blind predictor moves it 1.87 cm. So the model learned "the box moves when the hand moves", not "the box moves when the hand touches it". This rests on 2 held-out near-miss clips.
+At 1 s, on the 8 held-out near-miss clips, the predictor moves the box 1.44 cm. The probe's own jitter on the real frames is 0.67 cm. That is still a fail. But it is better than the first run, where it moved the box 2.37 cm on 2 near-miss clips. And it now moves the box less than the action-blind predictor (1.44 vs 2.17 cm at 1 s, 2.86 vs 4.48 at 2 s), which the first run never did. So the actions now tell it something about "the hand passed by". On the first run's 2 near-miss clips alone, it improved at 1 s (2.37 to 1.61 cm) but not at 2 s (4.17 to 4.23 cm).
 
 ### My palm paths drive the Panda
 
 The palm centre is about 12 cm behind the part of the hand that touches the box. So for each push I measure, at the moment of contact, the vector from the palm to the nearest edge of the box, and move the whole path by it. The Panda's closed gripper follows the moved path 1.5 cm above the table, with mink inverse kinematics in MuJoCo. The simulated box starts where the real one started.
 
-<!-- UPDATE: panda-push.gif is clip VID_20261016_141455-07 (the own-shift push with the median error); pick again from the new replay.json -->
 ![Panda replaying one of my pushes](assets/panda-push.gif)
 
-Final box position, simulation vs my clip:
+This held-out push is one where MediaPipe found my hand late, so the path is moved by the median shift. It is the one with the median replay error of the 7 such held-out pushes: 5.3 cm.
 
-<!-- UPDATE: all rows from pwm-data/clips/panda/replay.json -->
+Final box position, simulation vs my clip, all 115 clips:
+
 | clips | how the path is moved | error, median (worst) | real box moved, median |
 |---|---|---:|---:|
-| 12 pushes | its own contact shift | 3.6 cm (5.9) | 14.8 cm |
-| 10 pushes where the hand was found late | the median shift, turned to the hand's direction | 5.5 cm (22.7) | 15.7 cm |
-| 8 near-misses | the median shift | box moved 0.0 cm in all 8 | 0.0 cm |
+| 48 pushes | its own contact shift | 3.8 cm (11.1) | 14.4 cm |
+| 32 pushes where the hand was found late | the median shift, turned to the hand's direction | 4.7 cm (19.1) | 16.4 cm |
+| 35 near-misses | the median shift | 0.0 cm (0.5); the simulated box never moved | 0.0 cm |
 
-<!-- UPDATE: panda-near-miss.gif is clip VID_20261016_141631-03 (first held-out near-miss) -->
-The near-misses stay near-misses on the robot: [assets/panda-near-miss.gif](assets/panda-near-miss.gif). The same replay code runs on Push-T paths: [assets/pusht-panda.gif](assets/pusht-panda.gif).
+The replay needs no training, so I show all clips. On the first run's 30 clips, the 12 own-shift pushes give the same 3.6 cm as before. Their 10 late pushes improved from 5.5 to 3.0 cm (worst 22.7 to 18.6), because the median shift now comes from 48 pushes instead of 12.
+
+The near-misses stay near-misses on the robot: in [assets/panda-near-miss.gif](assets/panda-near-miss.gif), the first held-out clip of my take of close passes, the gripper goes by the box without moving it. The same replay code runs on Push-T paths: [assets/pusht-panda.gif](assets/pusht-panda.gif).
 
 ## Design choices
 
@@ -155,10 +156,11 @@ Dropped, and why:
 - **The Push-T gate on more seeds:** passed on 1 of 3. Seed 1 missed by 0.90 units because its action-blind predictor was stronger. Seed 2 got stuck in training (both models close to the static baseline). I did not investigate seed 2 further.
 - **V-JEPA 2:** failed the gate (16.8% below its action-blind predictor, 20% needed). Its probe error is twice DINOv2's (8.27 vs 3.96), so part of its error is in the read-out, not the prediction.
 - **The ranking test's top pick:** worse than random (79.8 vs 73.8 units from the goal on average).
-- <!-- UPDATE: own-data numbers --> **Gate 1 on my clips:** 3.49 cm vs 2 cm. Per the plan, a Gate 1 fail means "fix the input first". I trained anyway, for lack of time, and I report every number with this in mind.
-- <!-- UPDATE --> **Contact on my clips:** the near-miss test failed (2.37 cm of predicted motion where the box stayed still).
-- <!-- UPDATE --> **Late hands:** in 10 of 22 pushes MediaPipe found my hand less than 0.25 s before the box moved. Without the palm at contact, the replay has to guess the contact shift (median 5.5 cm error, worst 22.7).
-- <!-- UPDATE --> **The box's angle in replay:** median error 25°. The Panda pushes with two closed fingers, 3.8 × 2 cm. My hand pushes with a wide edge, so the real box turns differently.
+- **My first 30 clips were not enough** (fixed by more data). Gate 1 failed (probe 3.49 cm vs 2 cm) and so did the validation gate (15% below the action-blind predictor, 20% needed). Per the plan, a Gate 1 fail means "fix the input first". Recording 6 more takes did that: 1.24 cm and 32% (see [My data](#my-data)).
+- **Contact on my clips:** the near-miss test still fails. The predictor moves the box 1.44 cm at 1 s where it stayed still, twice the probe's jitter (0.67 cm). Better than the first run (2.37 cm), not solved.
+- **Late hands:** in 32 of 80 pushes MediaPipe found my hand less than 0.25 s before the box moved. Without the palm at contact, the replay has to guess the contact shift (median 4.7 cm error, worst 19.1). All 4 new held-out pushes are in this group, so only 3 held-out pushes have their own shift.
+- **The box's angle in replay:** median error 25° on the own-shift pushes. The Panda pushes with two closed fingers, 3.8 × 2 cm. My hand pushes with a wide edge, so the real box turns differently.
+- **Box size on the new takes:** the worst top-face error grew from 0.33 cm on the first 3 takes to 0.77 cm on all 9. I did not look into why.
 - **Open-loop Push-T replay on the Panda:** median 20 units (about 2 cm at the Panda's scale), worst 281 units. Push-T's 2D physics has no floor friction; MuJoCo does. Once the T drifts, the human's later corrections push it the wrong way.
 
 ## How to run
@@ -167,7 +169,7 @@ Dropped, and why:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/well-iam/humanoid-intern-challenge/blob/main/notebooks/pushing_world_model.ipynb)
 
-Runtime > Run all. By default the notebook downloads the cached features, trained predictors and tracks from the Hugging Face dataset [`<HF_REPO_ID>`](https://huggingface.co/datasets/<HF_REPO_ID>), and rebuilds every figure and GIF on the CPU. It took 11 min on my machine with the GPU hidden. Set `RETRAIN = "clips"` to retrain the predictors on my clips (about 40 min on a T4, estimated) or `"all"` to also redo Push-T with DINOv2 (about 1.5 h, estimated). Push-T is downloaded from its original URL, never re-hosted.
+Runtime > Run all. By default the notebook downloads the cached features, trained predictors and tracks from the Hugging Face dataset [`well-iam/humanoid-intern-challenge`](https://huggingface.co/datasets/well-iam/humanoid-intern-challenge), and rebuilds every figure and GIF on the CPU. It took 11 min on my machine with the GPU hidden. Set `RETRAIN = "clips"` to retrain the predictors on my clips (about 40 min on a T4, estimated) or `"all"` to also redo Push-T with DINOv2 (about 1.5 h, estimated). Push-T is downloaded from its original URL, never re-hosted.
 
 <!-- TODO: after the public upload, run the notebook once on a fresh Colab runtime and write the time here. -->
 Tested Colab runtime: Python 3.13.15, PyTorch 2.11.0+cu130, Tesla T4.
@@ -186,14 +188,18 @@ Push-T, end to end (each model trains in about 15 min):
 
 ```bash
 uv run python scripts/data.py --dataset pusht
-uv run python scripts/embed.py --dataset pusht --encoder dinov2
-uv run python scripts/train.py --dataset pusht --encoder dinov2 --precision fp16 --batch-size 16 --steps 2500 --lr 1e-3
-uv run python scripts/train.py --dataset pusht --encoder dinov2 --precision fp16 --batch-size 16 --steps 2500 --lr 1e-3 --blind
-uv run python scripts/evaluate.py --dataset pusht --encoder dinov2
-uv run python scripts/compare.py --dataset pusht
+for enc in dinov2 vjepa2; do
+  uv run python scripts/embed.py --dataset pusht --encoder $enc
+  uv run python scripts/train.py --dataset pusht --encoder $enc --precision fp16 --batch-size 16 --steps 2500 --lr 1e-3
+  uv run python scripts/train.py --dataset pusht --encoder $enc --precision fp16 --batch-size 16 --steps 2500 --lr 1e-3 --blind
+  uv run python scripts/evaluate.py --dataset pusht --encoder $enc
+done
+uv run python scripts/compare.py --dataset pusht              # error-vs-horizon.png, winner.json
 uv run python scripts/rank.py --dataset pusht --encoder dinov2
 uv run python scripts/panda_replay.py --dataset pusht
 ```
+
+The extra seeds: the two `train.py` lines and `evaluate.py` with `--encoder dinov2 --seed 1` (and 2), then `uv run python scripts/seeds.py --dataset pusht --encoder dinov2 --seeds 0 1 2`.
 
 My clips: put the takes in `$PWM_DATA/clips/raw/`, then
 
@@ -204,12 +210,20 @@ uv run python scripts/train.py --dataset clips --encoder dinov2 --precision fp16
 uv run python scripts/train.py --dataset clips --encoder dinov2 --precision fp16 --batch-size 16 --steps 2500 --lr 1e-3 --blind
 uv run python scripts/evaluate.py --dataset clips --encoder dinov2
 uv run python scripts/near_miss.py --dataset clips --encoder dinov2
-uv run python scripts/panda_replay.py --dataset clips
-uv run python scripts/gif_strip.py
+uv run python scripts/probe_scaling.py --dataset clips --encoder dinov2
+# the same model scored on the first 3 takes' 8 held-out clips only (the before/after table)
+uv run python scripts/evaluate.py --dataset clips --encoder dinov2 --only-takes VID_20261016_141304 VID_20261016_141455 VID_20261016_141631
+uv run python scripts/near_miss.py --dataset clips --encoder dinov2 --only-takes VID_20261016_141304 VID_20261016_141455 VID_20261016_141631
+uv run python scripts/panda_replay.py --dataset clips --episode VID_20261016_163841-02 VID_20261016_165020-05
+uv run python scripts/gif_strip.py --episode VID_20261016_141304-11
 uv run python scripts/readme_assets.py   # copies the README's figures into assets/
 ```
 
-The 1080p takes are not public. To run the clip chain, download the Hugging Face dataset above into `$PWM_DATA`: it holds the tracked episodes, so you can skip `track.py` and start from `embed.py`.
+The 1080p takes are not public. To run the clip chain without them, download the Hugging Face dataset into `$PWM_DATA` (9.6 GB; add `--exclude "clips/videos/*"` to skip the 0.6 GB of 720p takes): it holds the tracked episodes, so you can skip `track.py` and start from `embed.py`.
+
+```bash
+uv run hf download well-iam/humanoid-intern-challenge --repo-type dataset --local-dir $PWM_DATA
+```
 
 ## License
 
