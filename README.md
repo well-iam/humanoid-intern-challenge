@@ -167,11 +167,8 @@ Dropped, and why:
 
 ### Colab (no GPU needed)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/well-iam/humanoid-intern-challenge/blob/main/notebooks/pushing_world_model.ipynb)
+Runtime > Run all. By default the notebook downloads the cached features, trained predictors and tracks from the Hugging Face dataset [`well-iam/humanoid-intern-challenge`](https://huggingface.co/datasets/well-iam/humanoid-intern-challenge), and rebuilds every figure and GIF on the CPU. It took about 12 min on a fresh Colab runtime (11 min on my machine with the GPU hidden). Set `RETRAIN = "clips"` to retrain the predictors on my clips (about 40 min on a T4, estimated) or `"all"` to also redo Push-T with DINOv2 (about 1.5 h, estimated). Push-T is downloaded from its original URL, never re-hosted.
 
-Runtime > Run all. By default the notebook downloads the cached features, trained predictors and tracks from the Hugging Face dataset [`well-iam/humanoid-intern-challenge`](https://huggingface.co/datasets/well-iam/humanoid-intern-challenge), and rebuilds every figure and GIF on the CPU. It took 11 min on my machine with the GPU hidden. Set `RETRAIN = "clips"` to retrain the predictors on my clips (about 40 min on a T4, estimated) or `"all"` to also redo Push-T with DINOv2 (about 1.5 h, estimated). Push-T is downloaded from its original URL, never re-hosted.
-
-<!-- TODO: after the public upload, run the notebook once on a fresh Colab runtime and write the time here. -->
 Tested Colab runtime: Python 3.13.15, PyTorch 2.11.0+cu130, Tesla T4.
 
 ### Locally
