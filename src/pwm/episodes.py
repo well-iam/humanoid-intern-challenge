@@ -12,6 +12,7 @@ import numpy as np
 
 SPLITS = ("train", "held-out")
 KINDS = ("reference", "push", "near-miss")
+TRACKS = {"pusher_seen": (), "object_seen": (), "object_angle": (), "hand_direction": (2,)}  # optional, per frame
 
 
 @dataclass
@@ -25,6 +26,11 @@ class Episode:
     unit: str  # name of the table unit, e.g. "cm" or "Push-T units"
     split: str  # one of SPLITS
     kind: str  # one of KINDS
+    # Optional per-frame tracks, from sources that track rather than record (my clips); None elsewhere.
+    pusher_seen: np.ndarray | None = None  # (T,) bool: False where the pusher position is held or filled
+    object_seen: np.ndarray | None = None  # (T,) bool: False where the object position is filled
+    object_angle: np.ndarray | None = None  # (T,) radians, as in pwm.replay; not wrapped
+    hand_direction: np.ndarray | None = None  # (T, 2) unit vector, wrist to middle finger's base
 
     def __post_init__(self):
         n = len(self.frames)
@@ -34,6 +40,9 @@ class Episode:
         assert self.object_pos.shape == (n, 2), self.name
         assert self.split in SPLITS, self.split
         assert self.kind in KINDS, self.kind
+        for name, shape in TRACKS.items():
+            value = getattr(self, name)
+            assert value is None or value.shape == (n, *shape), (self.name, name)
 
 
 def save_episodes(episodes: list[Episode], folder: Path) -> None:
@@ -41,6 +50,7 @@ def save_episodes(episodes: list[Episode], folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for ep in episodes:
         meta = dict(workspace=ep.workspace, unit=ep.unit, split=ep.split, kind=ep.kind)
+        tracks = {name: getattr(ep, name) for name in TRACKS if getattr(ep, name) is not None}
         np.savez(
             folder / f"{ep.name}.npz",
             frames=ep.frames,
@@ -48,6 +58,7 @@ def save_episodes(episodes: list[Episode], folder: Path) -> None:
             pusher_pos=ep.pusher_pos,
             object_pos=ep.object_pos,
             meta=json.dumps(meta),
+            **tracks,
         )
 
 
@@ -65,6 +76,7 @@ def load_episodes(folder: Path) -> list[Episode]:
                     pusher_pos=f["pusher_pos"],
                     object_pos=f["object_pos"],
                     **meta,
+                    **{name: f[name] for name in TRACKS if name in f},
                 )
             )
     return episodes

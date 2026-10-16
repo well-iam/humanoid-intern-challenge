@@ -6,6 +6,7 @@ import json
 import numpy as np
 
 from pwm import stages
+from pwm.datasets import DATASETS, Dataset, toy
 from pwm.encoders import ENCODERS
 from pwm.encoders.toy import ToyEncoder
 from pwm.episodes import load_episodes, save_episodes
@@ -116,6 +117,33 @@ def test_retrievals_draw_the_nearest_real_frames_of_a_few_held_out_rollouts(tmp_
 
     assert path == tmp_path / "toy" / "toy" / "retrievals.png"
     assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_rebuilding_the_episodes_drops_those_whose_source_is_gone(tmp_path):
+    # E.g. a bad take deleted from the raw folder: its clips must not stay in the dataset.
+    stages.make_episodes("toy", root=tmp_path)
+    folder = tmp_path / "toy" / "episodes"
+    save_episodes([dataclasses.replace(load_episodes(folder)[0], name="toy-gone")], folder)
+
+    stages.make_episodes("toy", root=tmp_path)
+
+    names = [ep.name for ep in load_episodes(folder)]
+    assert "toy-gone" not in names and len(names) == 60
+
+
+def test_a_dataset_can_read_its_raw_source_from_another_folder(tmp_path, monkeypatch):
+    # The test take lives in <root>/clips/test-take but is a dataset of its own, never part of "clips".
+    read_from = []
+
+    def build(raw_dir):
+        read_from.append(raw_dir)
+        return toy.make_episodes(n_episodes=4)
+
+    monkeypatch.setitem(DATASETS, "elsewhere", Dataset(build=build, step=0.2, move_threshold=1.0, raw="clips/test-take"))
+    stages.make_episodes("elsewhere", root=tmp_path)
+
+    assert read_from == [tmp_path / "clips" / "test-take"]
+    assert len(load_episodes(tmp_path / "elsewhere" / "episodes")) == 4
 
 
 def test_embedding_again_encodes_only_the_episodes_not_cached_yet(tmp_path, monkeypatch):

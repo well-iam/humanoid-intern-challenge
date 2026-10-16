@@ -158,7 +158,9 @@ rich==15.0.0
 safetensors==0.8.0
     # via transformers
 scipy==1.18.1
-    # via qpsolvers
+    # via
+    #   pushing-world-model
+    #   qpsolvers
 shapely==2.2.0
     # via gym-pusht
 shellingham==1.5.4

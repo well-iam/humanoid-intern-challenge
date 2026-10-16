@@ -1,0 +1,83 @@
+"""Tracked clips -> episodes: the labels and the held-out split, on made-up tracks (fast).
+
+The real-video side of the clip adapter is Seam B in test_clip_tracking.py (slow). The split cannot be checked
+there: the test take has only 3 clips, and Friday's takes are recorded after this code.
+"""
+
+import numpy as np
+
+from pwm.datasets import tracking
+from pwm.episodes import load_episodes, save_episodes
+
+
+def made_up_clip(name: str, moved: float, n: int = 12) -> tracking.TrackedClip:
+    """A tracked clip whose wallet slides `moved` cm along x while the hand is in view."""
+    t = np.arange(n) / 8
+    object_pos = np.stack([10 + moved * np.clip(t - 0.5, 0, 0.5) / 0.5, np.full(n, 20.0)], axis=1)
+    return tracking.TrackedClip(
+        name=name,
+        frames=np.zeros((n, 8, 8, 3), np.uint8),
+        timestamps=t,
+        sheet=np.array(tracking.SHEET),
+        drift_px=0.1,
+        object_pos=object_pos,
+        object_angle=np.zeros(n),
+        object_seen=np.ones(n, bool),
+        object_size=np.array(tracking.WALLET[:2]),
+        palm=object_pos + [0, 9],
+        palm_seen=t >= 0.25,
+        hand_direction=np.tile([0.0, -1.0], (n, 1)),
+        entered=0.25,
+        left=t[-1],
+        kept=n,
+    )
+
+
+def friday(n_push: int = 30, n_near_miss: int = 10) -> list[tracking.TrackedClip]:
+    """Clips of three takes, pushes and near-misses mixed, in no particular order."""
+    kinds = ["push"] * n_push + ["near-miss"] * n_near_miss
+    order = np.random.default_rng(7).permutation(len(kinds))
+    return [made_up_clip(f"VID_{k // 15}-{k % 15 + 1:02d}", 5.0 if kinds[i] == "push" else 0.3)
+            for k, i in enumerate(order)]
+
+
+def test_the_wallet_moving_more_than_1_cm_makes_a_push():
+    episodes = tracking.to_episodes([made_up_clip("a", 1.5), made_up_clip("b", 0.6)])
+    assert [ep.kind for ep in episodes] == ["push", "near-miss"]
+
+
+def test_8_clips_are_held_out_6_pushes_and_2_near_misses_the_same_every_time():
+    clips = friday()
+    first = tracking.to_episodes(clips)
+    again = tracking.to_episodes(clips[::-1])  # the order the takes are read in does not matter
+
+    held_out = [ep for ep in first if ep.split == "held-out"]
+    assert [ep.kind for ep in held_out].count("push") == 6
+    assert [ep.kind for ep in held_out].count("near-miss") == 2
+    assert len(held_out) == 8
+    assert [(ep.name, ep.split) for ep in first] == [(ep.name, ep.split) for ep in again]
+
+
+def test_a_small_set_holds_out_at_most_half_of_each_kind():
+    # The 3-clip test take: 2 pushes and a near-miss.
+    episodes = tracking.to_episodes(friday(n_push=2, n_near_miss=1))
+    held_out = [ep.kind for ep in episodes if ep.split == "held-out"]
+    assert held_out == ["push"]
+
+
+def test_the_wallets_footprint_is_11_cm_across_and_13_cm_along_table_y_at_angle_0():
+    corners = tracking.object_corners([20.0, 30.0], 0.0)
+    np.testing.assert_allclose(corners.min(axis=0), [14.5, 23.5])
+    np.testing.assert_allclose(corners.max(axis=0), [25.5, 36.5])
+    # A quarter turn lays the long side along table x.
+    turned = tracking.object_corners([20.0, 30.0], np.pi / 2)
+    np.testing.assert_allclose(np.ptp(turned, axis=0), [13.0, 11.0])
+
+
+def test_the_tracks_kept_next_to_the_positions_survive_saving_and_loading(tmp_path):
+    episode = tracking.to_episodes([made_up_clip("a", 5.0)])[0]
+    save_episodes([episode], tmp_path)
+    loaded = load_episodes(tmp_path)[0]
+    for name in ("pusher_seen", "object_seen", "object_angle", "hand_direction"):
+        np.testing.assert_array_equal(getattr(loaded, name), getattr(episode, name))
+    assert not loaded.pusher_seen[:2].any() and loaded.pusher_seen[2:].all()

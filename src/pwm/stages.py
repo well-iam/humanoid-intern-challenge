@@ -3,8 +3,10 @@
 Each stage takes a dataset (and an encoder), reads its inputs from the run folder and
 writes its outputs there, so any stage can be rerun on its own:
 
-    <root>/<dataset>/raw/                    raw source, owned by the dataset adapter
+    <root>/<dataset>/raw/                    raw source, owned by the dataset adapter (a dataset may name
+                                             another folder: the test take is <root>/clips/test-take)
     <root>/<dataset>/episodes/<name>.npz     one file per episode         (make_episodes)
+    <root>/<dataset>/tracking/               clips only: report.md and <take>.gif  (scripts/track.py)
     <root>/<dataset>/<encoder>/embeddings/<name>.npy  fp16 (frames, patches, dims)  (embed)
     <root>/<dataset>/<encoder>/predictor.pt    the trained predictor                  (train)
     <root>/<dataset>/<encoder>/predictor-blind.pt  the action-blind predictor        (train --blind)
@@ -56,9 +58,24 @@ def data_root(root: str | Path | None = None) -> Path:
 
 
 def make_episodes(dataset: str, root: str | Path | None = None) -> None:
-    folder = data_root(root) / dataset
-    episodes = DATASETS[dataset].build(folder / "raw")
-    save_episodes(episodes, folder / "episodes")
+    write_episodes(dataset, DATASETS[dataset].build(raw_folder(dataset, root)), root)
+
+
+def raw_folder(dataset: str, root: str | Path | None = None) -> Path:
+    """Where the dataset's raw source lives: <root>/<dataset>/raw, unless the dataset names another folder."""
+    raw = DATASETS[dataset].raw
+    return data_root(root) / raw if raw else data_root(root) / dataset / "raw"
+
+
+def write_episodes(dataset: str, episodes: list[Episode], root: str | Path | None = None) -> None:
+    """Write the dataset's episodes; the episodes folder then holds exactly these (no stale ones from a
+    source that is gone)."""
+    folder = data_root(root) / dataset / "episodes"
+    names = {ep.name for ep in episodes}
+    for path in folder.glob("*.npz"):
+        if path.stem not in names:
+            path.unlink()
+    save_episodes(episodes, folder)
 
 
 def embed(dataset: str, encoder: str, root: str | Path | None = None) -> None:
