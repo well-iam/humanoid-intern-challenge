@@ -6,6 +6,8 @@ annotated-doc==0.0.5
     # via typer
 anyio==4.15.1 ; sys_platform != 'emscripten'
     # via httpx2
+av==19.0.1
+    # via pushing-world-model
 cffi==2.1.1
     # via pymunk
 click==8.5.0
