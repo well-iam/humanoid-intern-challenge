@@ -42,7 +42,7 @@ import numpy as np
 import torch
 
 from pwm.datasets import DATASETS
-from pwm.encoders import get_encoder
+from pwm.encoders import ENCODERS, get_encoder
 from pwm.episodes import Episode, load_episodes, save_episodes
 from pwm.evaluator import (
     GATE_HORIZON,
@@ -80,17 +80,31 @@ def raw_folder(dataset: str, root: str | Path | None = None) -> Path:
 
 def write_episodes(dataset: str, episodes: list[Episode], root: str | Path | None = None) -> None:
     """Write the dataset's episodes; the episodes folder then holds exactly these (no stale ones from a
-    source that is gone)."""
+    source that is gone). An episode whose frames changed (e.g. a take tracked again) loses its cached
+    embeddings, so `embed` encodes it again."""
     folder = data_root(root) / dataset / "episodes"
     names = {ep.name for ep in episodes}
     for path in folder.glob("*.npz"):
         if path.stem not in names:
             path.unlink()
+    for ep in episodes:
+        if not _same_frames(folder / f"{ep.name}.npz", ep.frames):
+            for encoder in ENCODERS:
+                (data_root(root) / dataset / encoder / "embeddings" / f"{ep.name}.npy").unlink(missing_ok=True)
     save_episodes(episodes, folder)
 
 
+def _same_frames(path: Path, frames: np.ndarray) -> bool:
+    """Whether the episode file at `path` exists and holds exactly these frames."""
+    if not path.exists():
+        return False
+    with np.load(path) as f:
+        return bool(np.array_equal(f["frames"], frames))
+
+
 def embed(dataset: str, encoder: str, root: str | Path | None = None) -> None:
-    """Encode every episode that has no cached frame embeddings yet (or a different frame count)."""
+    """Encode every episode that has no cached frame embeddings yet (or a different frame count; an episode
+    rebuilt with other frames has lost its cache, see `write_episodes`)."""
     folder = data_root(root) / dataset
     out = folder / encoder / "embeddings"
     out.mkdir(parents=True, exist_ok=True)
@@ -243,12 +257,13 @@ def _output(run: Path, title: str, only_takes: list[str] | None) -> tuple[Path, 
 
 def compare(dataset: str, root: str | Path | None = None) -> str:
     """Compare the encoders whose predictors have been evaluated: plot error vs horizon for
-    each, pick the winning encoder and write it to winner.json. Returns the winner."""
+    each, pick the winning encoder and write it to winner.json. Returns the winner. Only folders named after
+    an encoder count: an archived run (e.g. clips/dinov2-30clips) is not one."""
     folder = data_root(root) / dataset
     reports = {}
     for results in sorted(folder.glob("*/results.json")):
         report = Report.load(results.parent)
-        if PREDICTOR in report.errors:
+        if results.parent.name in ENCODERS and PREDICTOR in report.errors:  # not an archived run
             reports[results.parent.name] = report
     assert reports, f"no evaluated predictor under {folder}"
     winner = winning_encoder(reports)
@@ -446,7 +461,7 @@ def redraw(root: str | Path | None = None) -> list[Path]:
             run, encoder = results.parent, results.parent.name
             name = ENCODER_NAMES.get(encoder, encoder)
             report = Report.load(run)
-            if PREDICTOR in report.errors:
+            if encoder in ENCODERS and PREDICTOR in report.errors:  # an archived run is redrawn, never compared
                 evaluated[encoder] = report
             trained_seeds = [0] + sorted(int(p.parent.name.removeprefix("seed-")) for p in run.glob("seed-*/results.json"))
             for seed in trained_seeds:

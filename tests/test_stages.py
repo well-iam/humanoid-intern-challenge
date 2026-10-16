@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import shutil
 
 import numpy as np
 
@@ -190,6 +191,33 @@ def test_embedding_again_encodes_only_the_episodes_not_cached_yet(tmp_path, monk
     np.testing.assert_allclose(embeddings[-1], ToyEncoder().encode(new.frames), atol=1e-3)
 
 
+def test_rebuilding_an_episode_with_new_frames_makes_embedding_encode_it_again(tmp_path, monkeypatch):
+    # E.g. a take tracked again: same clip name and frame count, other frames. Its cached embedding is stale.
+    frames_seen = []
+
+    class CountingEncoder(ToyEncoder):
+        name = "counting"
+
+        def encode(self, frames):
+            frames_seen.append(len(frames))
+            return super().encode(frames)
+
+    monkeypatch.setitem(ENCODERS, "counting", CountingEncoder)
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "counting", root=tmp_path)
+    episodes = load_episodes(tmp_path / "toy" / "episodes")
+    changed = dataclasses.replace(episodes[0], frames=255 - episodes[0].frames)
+
+    stages.write_episodes("toy", episodes, root=tmp_path)  # unchanged: the cache stays
+    stages.write_episodes("toy", [changed, *episodes[1:]], root=tmp_path)
+    frames_seen.clear()
+    stages.embed("toy", "counting", root=tmp_path)
+
+    assert frames_seen == [len(changed.frames)]
+    embedding = stages.load_embeddings("toy", "counting", [changed], root=tmp_path)[0]
+    np.testing.assert_allclose(embedding, ToyEncoder().encode(changed.frames), atol=1e-3)
+
+
 def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
     # The notebook's fast path: no episodes, no embeddings, no predictors, only the saved results.
     stages.make_episodes("toy", root=tmp_path)
@@ -209,6 +237,21 @@ def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
                 folder / "error-vs-horizon-seeds.png", folder / "near-miss.png"}
     assert set(drawn) == expected
     assert all(path.read_bytes().startswith(b"\x89PNG") for path in expected)
+
+
+def test_an_archived_run_is_redrawn_but_never_taken_for_an_encoder(tmp_path):
+    # E.g. clips/dinov2-30clips: the first run, kept for the before/after.
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3)
+    stages.evaluate("toy", "toy", root=tmp_path)
+    shutil.copytree(tmp_path / "toy" / "toy", tmp_path / "toy" / "toy-30clips")
+
+    assert stages.compare("toy", root=tmp_path) == "toy"
+    assert set(json.loads((tmp_path / "toy" / "winner.json").read_text())["predictor_error"]) == {"toy"}
+    drawn = stages.redraw(root=tmp_path)
+    assert tmp_path / "toy" / "error-vs-horizon.png" not in drawn  # one encoder: nothing to compare
+    assert tmp_path / "toy" / "toy-30clips" / "error-vs-horizon.png" in drawn
 
 
 def test_scoring_only_some_takes_keeps_the_training_clips_and_writes_to_its_own_folder(tmp_path):
