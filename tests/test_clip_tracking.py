@@ -58,6 +58,13 @@ def test_the_palm_is_tracked_from_the_hands_entry_to_its_exit_without_a_long_gap
         assert clip.palm_gaps == [], clip.name  # gaps longer than 0.25 s
 
 
+def test_pushes_where_the_hand_is_found_only_at_contact_are_flagged(tracked):
+    # On this take the box starts close to the frame's bottom edge, so MediaPipe finds the hand only as it
+    # touches the box (16 Oct; the real takes start the box at least 15 cm from that edge). Clip 3 is no push.
+    late = [any("hand found late" in flag for flag in clip.flags) for clip in tracked]
+    assert late == [True, True, False]
+
+
 def test_no_gaps_remain_in_the_palm_and_object_tracks_after_filling(episodes):
     assert len(episodes) == 3
     for ep in episodes:

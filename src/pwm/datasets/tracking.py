@@ -7,7 +7,8 @@
   ones too, but flagged), the path inside the hand's visit is smoothed (Savitzky-Golay), and the clip's frames
   take it at their video frames. Before the hand comes in, the palm is held at its first tracked point and
   flagged as not seen. The hand's direction (wrist, landmark 0, to the middle finger's base, landmark 9) is
-  kept next to it.
+  kept next to it. A hand found less than LATE_HAND before the object starts moving is flagged: its palm path
+  has little or nothing before contact.
 - Object: found in each straightened frame as the largest region of the setup's object pixels (its top face:
   white for the box on the carpet) of about its size. Its pose is the minimum-area rectangle around it. Frames
   where the hand hides part of it (area below OCCLUDED of the clip's median) are dropped and filled.
@@ -49,6 +50,8 @@ MAX_GAP = 0.25  # seconds: longer gaps in the palm path are flagged
 SMOOTHING = (9, 2)  # Savitzky-Golay window (video frames, 0.3 s at 30 fps) and polynomial order
 
 MOVED = 1.0  # cm: a clip is a push if the object ends further than this from where it started
+STARTS_MOVING = 0.5  # cm: the object has started moving once it is this far from where it started
+LATE_HAND = 0.25  # seconds: a hand found less than this before the object starts moving is flagged
 HELD_OUT = {"push": 6, "near-miss": 2}  # held-out clips per kind (at most half of each kind)
 SEED = 0
 STEP = 0.25  # seconds: every 2nd frame at 8 fps, two interleaved sequences
@@ -93,6 +96,27 @@ class TrackedClip:
     @property
     def kind(self) -> str:
         return "push" if self.moved > MOVED else "near-miss"
+
+    @property
+    def starts_moving(self) -> float:
+        """Seconds after the clap: the first frame where the object is more than STARTS_MOVING from where it
+        started (NaN if it never is)."""
+        away = np.linalg.norm(self.object_pos[: self.kept] - self.object_pos[0], axis=1) > STARTS_MOVING
+        return float(self.timestamps[np.argmax(away)]) if away.any() else np.nan
+
+    @property
+    def flags(self) -> list[str]:
+        """What to look at in this clip (the tracking report lists them)."""
+        flags = [self.problem] if self.problem else []
+        if self.palm_gaps:
+            flags.append("palm gaps " + ", ".join(f"{g:.2f} s at {s:.2f}" for s, g in self.palm_gaps))
+        if self.problem is None and self.kept == len(self.timestamps):
+            flags.append("hand still in view at the 6 s cap")
+        if self.drift_px > clips.MAX_DRIFT:
+            flags.append(f"camera moved {self.drift_px:.1f} px during the clip")
+        if self.entered > self.starts_moving - LATE_HAND:
+            flags.append(f"hand found late: at {self.entered:.2f} s, the object moves at {self.starts_moving:.2f} s")
+        return flags
 
 
 def hand_model(models: Path) -> Path:

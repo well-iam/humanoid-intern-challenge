@@ -134,23 +134,18 @@ lines += [
     "",
     "Times are seconds after the clap. Hand in / out: first and last frame MediaPipe finds the hand (the episode "
     "ends at the last). Palm seen: clip frames where the hand was found. Moved: the object's start-to-end "
-    f"distance (push above {tracking.MOVED:g} cm). Start pose: the object's centre (cm) and angle (degrees).",
+    f"distance (push above {tracking.MOVED:g} cm). Start pose: the object's centre (cm) and angle (degrees). "
+    f"\"Hand found late\": less than {tracking.LATE_HAND:g} s before the object starts moving, so the palm path "
+    "has little or nothing before contact.",
     "",
     "| clip | kind | split | moved (cm) | hand in | hand out | frames kept | palm seen | object seen "
     "| top face (cm) | start pose | A4 sheet (cm) | flags |",
     "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---|",
 ]
 for t in tracked:
-    flags = [t.problem] if t.problem else []
-    if t.palm_gaps:
-        flags.append("palm gaps " + ", ".join(f"{g:.2f} s at {s:.2f}" for s, g in t.palm_gaps))
-    if t.problem is None and t.kept == len(t.timestamps):
-        flags.append("hand still in view at the 6 s cap")
-    if t.drift_px > clips.MAX_DRIFT:
-        flags.append(f"camera moved {t.drift_px:.1f} px during the clip")
     sheet = f"{cm(t.sheet[0])} x {cm(t.sheet[1])}"
     if t.problem:
-        lines.append(f"| {t.name} | - | - | - | - | - | - | - | - | - | - | {sheet} | {'; '.join(flags)} |")
+        lines.append(f"| {t.name} | - | - | - | - | - | - | - | - | - | - | {sheet} | {'; '.join(t.flags)} |")
         continue
     k = t.kept
     x, y = t.object_pos[0]
@@ -158,7 +153,7 @@ for t in tracked:
         f"| {t.name} | {t.kind} | {split[t.name]} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "
         f"| {t.palm_seen[:k].sum()}/{k} | {t.object_seen[:k].sum()}/{k} "
         f"| {t.object_size[0]:.1f} x {t.object_size[1]:.1f} | ({x:.1f}, {y:.1f}), {np.degrees(t.object_angle[0]):.0f} "
-        f"| {sheet} | {'; '.join(flags) or '-'} |"
+        f"| {sheet} | {'; '.join(t.flags) or '-'} |"
     )
 
 # The static baseline through the toy encoder: the episodes flow through the chain.
