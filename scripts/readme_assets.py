@@ -14,15 +14,16 @@ LIMIT = 5e6  # bytes
 
 # README asset -> file in the run folder
 ASSETS = {
-    "gif-strip.gif": "clips/gif-strip/VID_20261016_141304-05.gif",
+    "gif-strip.gif": "clips/gif-strip/VID_20261016_141304-11.gif",
     "pusht-error-vs-horizon.png": "pusht/error-vs-horizon.png",
     "pusht-seeds.png": "pusht/dinov2/error-vs-horizon-seeds.png",
     "ranking.png": "pusht/dinov2/ranking/ranking.png",
     "pusht-panda.gif": "pusht/panda/pusht-002.gif",
     "clips-error-vs-horizon.png": "clips/dinov2/error-vs-horizon.png",
     "near-miss.png": "clips/dinov2/near-miss.png",
-    "panda-push.gif": "clips/panda/VID_20261016_141455-07.gif",
-    "panda-near-miss.gif": "clips/panda/VID_20261016_141631-03.gif",
+    "probe-scaling.png": "clips/dinov2/probe-scaling.png",
+    "panda-push.gif": "clips/panda/VID_20261016_163841-02.gif",
+    "panda-near-miss.gif": "clips/panda/VID_20261016_165020-05.gif",
 }
 
 parser = argparse.ArgumentParser(description=__doc__)
