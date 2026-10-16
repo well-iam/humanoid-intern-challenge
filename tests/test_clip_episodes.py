@@ -6,7 +6,7 @@ there: the test take has only 3 clips, and Friday's takes are recorded after thi
 
 import numpy as np
 
-from pwm.datasets import setups, tracking
+from pwm.datasets import clips, setups, tracking
 from pwm.episodes import load_episodes, save_episodes
 
 
@@ -141,3 +141,29 @@ def test_the_tracks_kept_next_to_the_positions_survive_saving_and_loading(tmp_pa
     for name in ("pusher_seen", "object_seen", "object_angle", "hand_direction"):
         np.testing.assert_array_equal(getattr(loaded, name), getattr(episode, name))
     assert not loaded.pusher_seen[:2].any() and loaded.pusher_seen[2:].all()
+
+
+def still_clip(corners) -> clips.Clip:
+    """A clip whose marker has these corners (image px); 10 px per cm."""
+    return clips.Clip(
+        name="VID_0-01", clap=0.0, timestamps=np.zeros(1), source_times=np.zeros(1),
+        frames=np.zeros((1, 8, 8, 3), np.uint8), hand_free_frames=1, hand_free_found=1,
+        corners=np.asarray(corners, np.float64), drift_px=np.zeros(1), step_px=np.nan,
+        image_to_table=np.diag([0.1, 0.1, 1.0]),
+    )
+
+
+def test_the_a4_sheet_is_unmeasured_when_no_pale_region_rings_the_marker():
+    # E.g. the sheet in shadow: the frame is all dark carpet.
+    dark = np.full((480, 640, 3), 30, np.uint8)
+    marker = still_clip([[220, 140], [400, 140], [400, 320], [220, 320]])
+
+    assert np.isnan(tracking.sheet_size(dark, marker)).all()
+
+
+def test_the_a4_sheet_is_unmeasured_when_the_marker_sits_at_the_frames_edge():
+    # The ring just outside the marker leaves the frame.
+    pale = np.full((480, 640, 3), 230, np.uint8)
+    marker = still_clip([[460, 300], [639, 300], [639, 479], [460, 479]])
+
+    assert tracking.sheet_size(pale, marker).shape == (2,)

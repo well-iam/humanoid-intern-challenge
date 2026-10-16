@@ -396,7 +396,7 @@ def _pose(corners: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
 
 def sheet_size(image: np.ndarray, clip: clips.Clip) -> np.ndarray:
     """The A4 sheet's long and short side in table cm, in a raw video frame where no hand covers it. A side that
-    the frame's edge cuts is NaN.
+    the frame's edge cuts is NaN; both are if no pale region touches the marker's surround.
 
     The sheet is the large pale, unsaturated region around the marker (the wood is orange, the carpet dark; an
     opening drops the carpet's pale flecks). Its outline is the convex hull, so the marker's black squares
@@ -410,7 +410,11 @@ def sheet_size(image: np.ndarray, clip: clips.Clip) -> np.ndarray:
     centre = clip.corners.mean(axis=0)
     ring = centre + (clip.corners - centre) * (1 + 1.4 / clips.MARKER_SIDE)
     ring = np.concatenate([np.linspace(a, b, 50) for a, b in zip(ring, np.roll(ring, -1, axis=0))])
-    around = labels[np.round(ring[:, 1]).astype(int), np.round(ring[:, 0]).astype(int)]
+    x, y = np.round(ring[:, 0]).astype(int), np.round(ring[:, 1]).astype(int)
+    inside = (x >= 0) & (y >= 0) & (x < image.shape[1]) & (y < image.shape[0])
+    around = labels[y[inside], x[inside]]
+    if not (around > 0).any():  # no pale region touches the ring: the sheet is not seen
+        return np.full(2, np.nan)
     sheet = np.bincount(around[around > 0]).argmax()
     ys, xs = np.nonzero(labels == sheet)
     hull = cv2.convexHull(np.stack([xs, ys], axis=1).astype(np.float32)).reshape(-1, 2)
