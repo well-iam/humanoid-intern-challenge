@@ -17,6 +17,8 @@ PUBLIC = [  # paths relative to the run root
     "clips/episodes/*.npz",
     "clips/dinov2/**",
     "clips/panda/*",
+    "clips/dinov2-30clips/*",  # the first run, 30 clips (its embeddings are the same files as clips/dinov2/)
+    "clips/panda-30clips/*",
     "clips/gif-strip/*",
     "clips/tracking/*",
     "clips/logs/train-*.log",

@@ -9,6 +9,11 @@ KEPT = [
     "clips/dinov2/predictor-blind.pt",
     "clips/dinov2/results.json",
     "clips/dinov2/near-miss.json",
+    "clips/dinov2/probe-scaling.json",
+    "clips/dinov2/only-takes/results.json",
+    "clips/dinov2-30clips/results.json",  # the first 30-clip run, for the before/after
+    "clips/dinov2-30clips/predictor.pt",
+    "clips/panda-30clips/replay.json",
     "clips/panda/replay.json",
     "clips/panda/VID_1-01.gif",
     "clips/gif-strip/VID_1-01.gif",
@@ -36,6 +41,9 @@ LEFT_OUT = [
     "pusht/episodes/pusht-000.npz",
     "pusht/dinov2/embeddings/pusht-001.partial.npy",  # an interrupted write
     "models/mediapipe/hand_landmarker.task",
+    "clips/dinov2-30clips/embeddings/VID_1-01.npy",  # the same as clips/dinov2/embeddings
+    "clips/episodes-30clips/VID_1-01.npz",  # the same as clips/episodes
+    "clips/tracking-30clips/report.md",
 ]
 
 
