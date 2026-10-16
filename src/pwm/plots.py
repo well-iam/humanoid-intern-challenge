@@ -226,8 +226,9 @@ def plot_probe_scaling(curve: dict, path: Path) -> None:
     ax.plot(clips, errors, color=COLOURS[PREDICTOR], linewidth=2, marker="o", markersize=6, markeredgecolor=SURFACE,
             markeredgewidth=1.5, zorder=3)
     for n, e in zip(clips, errors):
-        ax.annotate(f"{e:.2f}", xy=(n, e), xytext=(0, 7), textcoords="offset points", ha="center", fontsize=8,
-                    color=INK)
+        below = 0 < mark - e < 0.4  # keep the label off the pass-mark line
+        ax.annotate(f"{e:.2f}", xy=(n, e), xytext=(0, -14 if below else 7), textcoords="offset points", ha="center",
+                    fontsize=8, color=INK)
     ax.set_xscale("log", base=2)
     ax.set_xticks(clips, [str(n) for n in clips])
     ax.minorticks_off()
