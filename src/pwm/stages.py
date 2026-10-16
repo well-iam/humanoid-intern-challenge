@@ -152,7 +152,7 @@ def evaluate(dataset: str, encoder: str, root: str | Path | None = None, seed: i
             trained[role] = Predictor.load(path, _device()).rollout
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
     report.save(run, title=f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""))
-    plot_errors({encoder: report}, run / "error-vs-horizon.png")
+    plot_errors({f"{ENCODER_NAMES.get(encoder, encoder)} on {dataset}": report}, run / "error-vs-horizon.png")
     return report
 
 
