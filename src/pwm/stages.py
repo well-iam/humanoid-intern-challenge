@@ -163,7 +163,8 @@ def evaluate(
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
     out, title = _output(run, f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""), only_takes)
     report.save(out, title=title)
-    plot_errors({f"{ENCODER_NAMES.get(encoder, encoder)} on {dataset}": report}, out / "error-vs-horizon.png")
+    subset = f" (held-out clips of {len(only_takes)} takes)" if only_takes else ""
+    plot_errors({f"{ENCODER_NAMES.get(encoder, encoder)} on {dataset}{subset}": report}, out / "error-vs-horizon.png")
     return report
 
 
@@ -180,7 +181,7 @@ def near_miss(dataset: str, encoder: str, root: str | Path | None = None, only_t
     out, title = _output(run, f"{dataset}, {encoder} encoder", only_takes)
     test.save(out, title)
     plot_near_miss(test, out / "near-miss.png", f"{ENCODER_NAMES.get(encoder, encoder)}, {dataset}"
-                   + (" (held-out clips of some takes)" if only_takes else ""))
+                   + (f" (held-out clips of {len(only_takes)} takes)" if only_takes else ""))
     return test
 
 
