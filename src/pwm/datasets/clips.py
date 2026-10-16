@@ -33,7 +33,7 @@ HAND_FREE = (0.1, 1.1)  # seconds after the clap: the hand is out of view (it ca
 MARKER_DICTIONARY, MARKER_ID = cv2.aruco.DICT_4X4_50, 0
 MAX_DRIFT = 1.0  # image px: the marker moving further than this means the camera moved
 CLAP_GAP = 3.0  # seconds: claps closer than this are one clap (echo, double hit)
-CLAP_RANGE = 10.0  # dB: a clap is at most this much quieter than the loudest one in the take
+CLAP_RANGE = 15.0  # dB: a clap is at most this much quieter than the loudest one in the take
 ENVELOPE = 0.01  # seconds per loudness sample
 
 
