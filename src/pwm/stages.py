@@ -15,6 +15,11 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/error-vs-horizon.png  this run's errors by horizon      (evaluate)
     <root>/<dataset>/<encoder>/near-miss.json, near-miss.md, near-miss.png
                                                the near-miss test                     (near_miss)
+    <root>/<dataset>/<encoder>/only-takes/     results.json, report.md, error-vs-horizon.png and the near-miss
+                                               files, scored on the held-out clips of some takes only
+                                               (evaluate and near_miss with only_takes)
+    <root>/<dataset>/<encoder>/probe-scaling.json, probe-scaling.png
+                                               probe error against training clips     (probe_scaling)
     <root>/<dataset>/<encoder>/retrievals.png  nearest real frames of a few rollouts  (retrievals)
     <root>/<dataset>/<encoder>/seed-<n>/       predictor.pt, predictor-blind.pt, results.json and
                                                report.md of a run trained with seed n (train and
@@ -51,7 +56,7 @@ from pwm.evaluator import (
 )
 from pwm.evaluator import evaluate as evaluate_episodes
 from pwm.evaluator import near_miss as near_miss_test
-from pwm.plots import ENCODER_NAMES, plot_errors, plot_near_miss, plot_ranking, save_retrievals
+from pwm.plots import ENCODER_NAMES, plot_errors, plot_near_miss, plot_probe_scaling, plot_ranking, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
 from pwm.probe import Probe
@@ -138,12 +143,16 @@ def train(
     predictor.save(run / _predictor_file(blind))
 
 
-def evaluate(dataset: str, encoder: str, root: str | Path | None = None, seed: int = 0) -> Report:
+def evaluate(
+    dataset: str, encoder: str, root: str | Path | None = None, seed: int = 0, only_takes: list[str] | None = None
+) -> Report:
     """Score the static baseline and whichever predictors of the run trained with `seed` exist.
-    The held-out windows and the shuffled actions are the same for every seed."""
-    folder = data_root(root) / dataset
-    episodes = load_episodes(folder / "episodes")
-    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    The held-out windows and the shuffled actions are the same for every seed.
+
+    `only_takes`: score only the held-out episodes whose names start with one of these (e.g. the takes a
+    smaller earlier run was held out on); the probe still fits on every training episode. The results then go
+    to <run>/only-takes/."""
+    episodes, embeddings = _scored(dataset, encoder, root, only_takes)
     spec = DATASETS[dataset]
     run = run_folder(dataset, encoder, root, seed)
     trained = {}
@@ -152,25 +161,83 @@ def evaluate(dataset: str, encoder: str, root: str | Path | None = None, seed: i
         if path.exists():
             trained[role] = Predictor.load(path, _device()).rollout
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
-    report.save(run, title=f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""))
-    plot_errors({f"{ENCODER_NAMES.get(encoder, encoder)} on {dataset}": report}, run / "error-vs-horizon.png")
+    out, title = _output(run, f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""), only_takes)
+    report.save(out, title=title)
+    plot_errors({f"{ENCODER_NAMES.get(encoder, encoder)} on {dataset}": report}, out / "error-vs-horizon.png")
     return report
 
 
-def near_miss(dataset: str, encoder: str, root: str | Path | None = None) -> NearMiss:
+def near_miss(dataset: str, encoder: str, root: str | Path | None = None, only_takes: list[str] | None = None) -> NearMiss:
     """The near-miss test with the trained predictors: how far each moves the object on held-out
-    windows where the pusher passes it by, next to windows where it really moves."""
-    folder = data_root(root) / dataset
-    episodes = load_episodes(folder / "episodes")
-    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    windows where the pusher passes it by, next to windows where it really moves. `only_takes` as in
+    `evaluate`."""
+    episodes, embeddings = _scored(dataset, encoder, root, only_takes)
     spec = DATASETS[dataset]
     run = run_folder(dataset, encoder, root)
     trained = {role: Predictor.load(run / _predictor_file(blind), _device()).rollout
                for role, blind in (("predictor", False), ("blind", True)) if (run / _predictor_file(blind)).exists()}
     test = near_miss_test(episodes, embeddings, spec.step, spec.move_threshold, **trained)
-    test.save(run, f"{dataset}, {encoder} encoder")
-    plot_near_miss(test, run / "near-miss.png", f"{ENCODER_NAMES.get(encoder, encoder)}, {dataset}")
+    out, title = _output(run, f"{dataset}, {encoder} encoder", only_takes)
+    test.save(out, title)
+    plot_near_miss(test, out / "near-miss.png", f"{ENCODER_NAMES.get(encoder, encoder)}, {dataset}"
+                   + (" (held-out clips of some takes)" if only_takes else ""))
     return test
+
+
+def probe_scaling(
+    dataset: str, encoder: str, root: str | Path | None = None, sizes: list[int] | None = None, folds: int = 5,
+    seed: int = 0,
+) -> dict:
+    """Probe error against the number of training clips, on training clips only (held-out clips are never
+    read). The training clips are split into `folds` folds; for each fold and each size n, the probe is fitted
+    on n clips drawn (by `seed`) from the other folds and scored on the fold's frames (mean distance). Sizes
+    default to doubling from 6 up to all the other folds' clips. Writes probe-scaling.json and .png to the run
+    folder."""
+    folder = data_root(root) / dataset
+    train = [ep for ep in load_episodes(folder / "episodes") if ep.split == "train"]
+    embeddings = load_embeddings(dataset, encoder, train, root)
+    rng = np.random.default_rng(seed)
+    fold_of = rng.permutation(len(train)) % folds
+    largest = min(int((fold_of != k).sum()) for k in range(folds))
+    if sizes is None:
+        sizes = sorted({*[n for n in (6, 12, 24, 48, 96) if n < largest], largest})
+    points = []
+    for n in sizes:
+        errors, counts = [], []
+        for k in range(folds):
+            others = np.flatnonzero(fold_of != k)
+            fit = rng.choice(others, size=n, replace=False)
+            probe = Probe.fit([embeddings[i] for i in fit], [train[i].object_pos for i in fit])
+            for i in np.flatnonzero(fold_of == k):
+                errors.append(np.linalg.norm(probe.predict(embeddings[i]) - train[i].object_pos, axis=1).sum())
+                counts.append(len(train[i].object_pos))
+        points.append({"clips": int(n), "error": float(np.sum(errors) / np.sum(counts))})
+        print(f"probe scaling: {n} clips -> {points[-1]["error"]:.2f} {train[0].unit}", flush=True)
+    curve = {"dataset": dataset, "encoder": encoder, "unit": train[0].unit, "workspace": train[0].workspace,
+             "folds": folds, "seed": seed,
+             "n_training_clips": len(train), "points": points}
+    run = run_folder(dataset, encoder, root)
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "probe-scaling.json").write_text(json.dumps(curve, indent=2))
+    plot_probe_scaling(curve, run / "probe-scaling.png")
+    return curve
+
+
+def _scored(dataset: str, encoder: str, root, only_takes: list[str] | None):
+    """The episodes to score and their embeddings: all, or every training episode and the held-out episodes of
+    `only_takes`."""
+    episodes = load_episodes(data_root(root) / dataset / "episodes")
+    if only_takes:
+        episodes = [ep for ep in episodes if ep.split == "train" or ep.name.startswith(tuple(only_takes))]
+    return episodes, load_embeddings(dataset, encoder, episodes, root)
+
+
+def _output(run: Path, title: str, only_takes: list[str] | None) -> tuple[Path, str]:
+    if not only_takes:
+        return run, title
+    out = run / "only-takes"
+    out.mkdir(parents=True, exist_ok=True)
+    return out, f"{title}, held-out clips of {', '.join(only_takes)} only"
 
 
 def compare(dataset: str, root: str | Path | None = None) -> str:

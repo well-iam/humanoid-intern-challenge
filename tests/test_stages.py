@@ -209,3 +209,33 @@ def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
                 folder / "error-vs-horizon-seeds.png", folder / "near-miss.png"}
     assert set(drawn) == expected
     assert all(path.read_bytes().startswith(b"\x89PNG") for path in expected)
+
+
+def test_scoring_only_some_takes_keeps_the_training_clips_and_writes_to_its_own_folder(tmp_path):
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    everything = stages.evaluate("toy", "toy", root=tmp_path)
+    held_out = sorted(ep.name for ep in load_episodes(tmp_path / "toy" / "episodes") if ep.split == "held-out")
+
+    some = stages.evaluate("toy", "toy", root=tmp_path, only_takes=held_out[:3])
+
+    assert 0 < some.n_windows < everything.n_windows
+    folder = tmp_path / "toy" / "toy" / "only-takes"
+    assert json.loads((folder / "results.json").read_text())["n_windows"] == some.n_windows
+    # The full run's results are left alone.
+    assert json.loads((tmp_path / "toy" / "toy" / "results.json").read_text())["n_windows"] == everything.n_windows
+
+
+def test_the_probe_scaling_curve_uses_training_clips_only_and_falls_with_more_clips(tmp_path):
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+
+    curve = stages.probe_scaling("toy", "toy", root=tmp_path, sizes=[5, 30])
+
+    n_train = sum(ep.split == "train" for ep in load_episodes(tmp_path / "toy" / "episodes"))
+    assert curve["n_training_clips"] == n_train
+    assert [point["clips"] for point in curve["points"]] == [5, 30]
+    assert curve["points"][1]["error"] < curve["points"][0]["error"]
+    folder = tmp_path / "toy" / "toy"
+    assert json.loads((folder / "probe-scaling.json").read_text()) == curve
+    assert (folder / "probe-scaling.png").stat().st_size > 0

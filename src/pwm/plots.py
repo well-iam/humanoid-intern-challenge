@@ -12,6 +12,7 @@ from pwm.evaluator import (  # noqa: E402
     REAL,
     TRUE,
     BLIND,
+    GATE_1_MARK,
     GATE_HORIZON,
     GATE_MARGIN,
     PREDICTOR,
@@ -203,6 +204,37 @@ def plot_ranking(report, path: Path, encoder: str) -> None:
     right.set_title("Rank agreement (black: mean, 95% interval)", color=INK_2, fontsize=9, loc="left")
     right.grid(axis="x", color=GRID, linewidth=0.8)
     right.grid(axis="y", visible=False)
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def plot_probe_scaling(curve: dict, path: Path) -> None:
+    """Probe error (cross-validated on training clips) against the number of clips the probe is fitted on, with
+    Gate 1's pass mark."""
+    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
+    fig, ax = plt.subplots(figsize=(6.4, 4.0), layout="constrained", facecolor=SURFACE)
+    encoder = ENCODER_NAMES.get(curve["encoder"], curve["encoder"])
+    fig.suptitle(f"Probe error against training clips, {encoder} on {curve['dataset']}", x=0.01, ha="left",
+                 fontsize=11, fontweight="bold", color=INK)
+    _plain(ax)
+    clips = [p["clips"] for p in curve["points"]]
+    errors = [p["error"] for p in curve["points"]]
+    mark = GATE_1_MARK * curve["workspace"]
+    ax.axhline(mark, color=INK_2, linewidth=1, linestyle="--", zorder=1)
+    ax.annotate(f"Gate 1 pass mark, {mark:g} {curve['unit']}", xy=(clips[0], mark), xytext=(0, 4),
+                textcoords="offset points", fontsize=8, color=INK_2)
+    ax.plot(clips, errors, color=COLOURS[PREDICTOR], linewidth=2, marker="o", markersize=6, markeredgecolor=SURFACE,
+            markeredgewidth=1.5, zorder=3)
+    for n, e in zip(clips, errors):
+        ax.annotate(f"{e:.2f}", xy=(n, e), xytext=(0, 7), textcoords="offset points", ha="center", fontsize=8,
+                    color=INK)
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(clips, [str(n) for n in clips])
+    ax.minorticks_off()
+    ax.set_ylim(0, max(errors) * 1.15)
+    ax.set_xlabel(f"training clips the probe is fitted on ({curve['folds']}-fold cross-validation over "
+                  f"{curve['n_training_clips']} training clips)", color=INK_2)
+    ax.set_ylabel(f"probe error on left-out clips ({curve['unit']})", color=INK_2)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
     plt.close(fig)
 

@@ -34,12 +34,30 @@ def made_up_clip(name: str, moved: float, n: int = 12, entered: float = 0.25) ->
     )
 
 
-def friday(n_push: int = 30, n_near_miss: int = 10) -> list[tracking.TrackedClip]:
-    """Clips of three takes, pushes and near-misses mixed, in no particular order."""
+def friday(n_push: int = 30, n_near_miss: int = 10, takes=("VID_0", "VID_1", "VID_2")) -> list[tracking.TrackedClip]:
+    """Clips of a few takes, pushes and near-misses mixed, in no particular order."""
     kinds = ["push"] * n_push + ["near-miss"] * n_near_miss
     order = np.random.default_rng(7).permutation(len(kinds))
-    return [made_up_clip(f"VID_{k // 15}-{k % 15 + 1:02d}", 5.0 if kinds[i] == "push" else 0.3)
+    per_take = -(-len(kinds) // len(takes))
+    return [made_up_clip(f"{takes[k // per_take]}-{k % per_take + 1:02d}", 5.0 if kinds[i] == "push" else 0.3)
             for k, i in enumerate(order)]
+
+
+# Ticket 13's held-out clips (its tracking report), from the first three takes (14:13-14:16).
+FIRST_HELD_OUT = {
+    "VID_20261016_141304-03", "VID_20261016_141304-05", "VID_20261016_141304-11", "VID_20261016_141455-02",
+    "VID_20261016_141455-06", "VID_20261016_141455-09", "VID_20261016_141631-03", "VID_20261016_141631-08",
+}
+
+
+def first_takes() -> list[tracking.TrackedClip]:
+    """The first three takes as ticket 13 cut them: 11 + 10 + 9 clips, 22 pushes and 8 near-misses."""
+    near_misses = {"VID_20261016_141631-03", "VID_20261016_141631-08", "VID_20261016_141455-04",
+                   "VID_20261016_141631-01", "VID_20261016_141631-02", "VID_20261016_141631-04",
+                   "VID_20261016_141631-05", "VID_20261016_141631-06"}
+    names = [f"VID_20261016_{take}-{k:02d}" for take, n in [("141304", 11), ("141455", 10), ("141631", 9)]
+             for k in range(1, n + 1)]
+    return [made_up_clip(name, 0.3 if name in near_misses else 5.0) for name in names]
 
 
 def test_the_object_moving_more_than_1_cm_makes_a_push():
@@ -47,16 +65,26 @@ def test_the_object_moving_more_than_1_cm_makes_a_push():
     assert [ep.kind for ep in episodes] == ["push", "near-miss"]
 
 
-def test_8_clips_are_held_out_6_pushes_and_2_near_misses_the_same_every_time():
-    clips = friday()
+def test_the_first_takes_keep_their_8_held_out_clips_and_the_new_takes_add_4_pushes_and_6_near_misses():
+    new = friday(n_push=40, n_near_miss=30, takes=("VID_20261016_163613", "VID_20261016_165020"))
+    clips = first_takes() + new
     first = tracking.to_episodes(clips)
     again = tracking.to_episodes(clips[::-1])  # the order the takes are read in does not matter
 
-    held_out = [ep for ep in first if ep.split == "held-out"]
-    assert [ep.kind for ep in held_out].count("push") == 6
-    assert [ep.kind for ep in held_out].count("near-miss") == 2
-    assert len(held_out) == 8
+    held_out = {ep.name: ep.kind for ep in first if ep.split == "held-out"}
+    from_first_takes = {name for name in held_out if not name.startswith(("VID_20261016_163613", "VID_20261016_165020"))}
+    assert from_first_takes == FIRST_HELD_OUT
+    added = [kind for name, kind in held_out.items() if name not in FIRST_HELD_OUT]
+    assert added.count("push") == 4 and added.count("near-miss") == 6
     assert [(ep.name, ep.split) for ep in first] == [(ep.name, ep.split) for ep in again]
+
+
+def test_an_excluded_clip_is_left_out_before_the_draw():
+    clips = friday(n_push=20, n_near_miss=20)
+    kept = tracking.to_episodes(clips, excluded={"VID_0-01": "the hand moves the box back"})
+    assert "VID_0-01" not in [ep.name for ep in kept]
+    assert len(kept) == len(clips) - 1
+    assert sum(ep.split == "held-out" for ep in kept) == 10
 
 
 def test_a_small_set_holds_out_at_most_half_of_each_kind():

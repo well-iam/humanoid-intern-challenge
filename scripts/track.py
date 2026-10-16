@@ -82,7 +82,7 @@ stages.write_episodes(args.dataset, episodes, root)
 split = {ep.name: ep.split for ep in episodes}
 
 # The report.
-usable = [t for t in tracked if t.problem is None]
+usable = [t for t in tracked if t.problem is None and t.name not in tracking.EXCLUDED]
 kinds = [t.kind for t in usable]
 sheets = np.array([t.sheet for t in tracked])
 sizes = np.array([t.object_size for t in usable])
@@ -149,11 +149,12 @@ for t in tracked:
         continue
     k = t.kept
     x, y = t.object_pos[0]
+    flags = ([f"excluded: {tracking.EXCLUDED[t.name]}"] if t.name in tracking.EXCLUDED else []) + t.flags
     lines.append(
-        f"| {t.name} | {t.kind} | {split[t.name]} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "
+        f"| {t.name} | {t.kind} | {split.get(t.name, 'excluded')} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "
         f"| {t.palm_seen[:k].sum()}/{k} | {t.object_seen[:k].sum()}/{k} "
         f"| {t.object_size[0]:.1f} x {t.object_size[1]:.1f} | ({x:.1f}, {y:.1f}), {np.degrees(t.object_angle[0]):.0f} "
-        f"| {sheet} | {'; '.join(t.flags) or '-'} |"
+        f"| {sheet} | {'; '.join(flags) or '-'} |"
     )
 
 # The static baseline through the toy encoder: the episodes flow through the chain.

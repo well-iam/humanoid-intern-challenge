@@ -20,8 +20,9 @@
 - Conversion check: the A4 sheet under the marker is measured in every clip; it lies flat on the table, so
   its size checks the whole pixel-to-cm conversion.
 - Episodes: each clip ends at the last frame where the hand is found (the hand left the view). It is a push if
-  the object ends more than MOVED from where it started, else a near-miss. HELD_OUT clips of each kind (at most
-  half of that kind) are held out, drawn by a fixed seed over all takes together.
+  the object ends more than MOVED from where it started, else a near-miss. Held out: ticket 13's 8 clips of the
+  first takes, plus NEW_HELD_OUT of each kind drawn by a fixed seed over the later takes. EXCLUDED clips (junk
+  the clap rule cut, checked by eye) are left out.
 """
 
 import urllib.request
@@ -52,8 +53,19 @@ SMOOTHING = (9, 2)  # Savitzky-Golay window (video frames, 0.3 s at 30 fps) and 
 MOVED = 1.0  # cm: a clip is a push if the object ends further than this from where it started
 STARTS_MOVING = 0.5  # cm: the object has started moving once it is this far from where it started
 LATE_HAND = 0.25  # seconds: a hand found less than this before the object starts moving is flagged
-HELD_OUT = {"push": 6, "near-miss": 2}  # held-out clips per kind (at most half of each kind)
+# The held-out split. The first three takes (14:13-14:16) keep the 8 clips ticket 13 held out (6 pushes, 2
+# near-misses), so the 30-clip results stay comparable. Every later take adds NEW_HELD_OUT clips of each kind (at
+# most half of that kind), drawn by SEED over the later takes' sorted clip names. Everything else trains.
+FIRST_TAKES = ("VID_20261016_141304", "VID_20261016_141455", "VID_20261016_141631")
+FIRST_HELD_OUT = (
+    "VID_20261016_141304-03", "VID_20261016_141304-05", "VID_20261016_141304-11", "VID_20261016_141455-02",
+    "VID_20261016_141455-06", "VID_20261016_141455-09", "VID_20261016_141631-03", "VID_20261016_141631-08",
+)
+NEW_HELD_OUT = {"push": 4, "near-miss": 6}
 SEED = 0
+# Clips left out of the episodes: the clap rule cut them, but they are not a push or a near-miss (checked by eye
+# on the frames). Clip name -> why.
+EXCLUDED: dict[str, str] = {}
 STEP = 0.25  # seconds: every 2nd frame at 8 fps, two interleaved sequences
 MOVE_THRESHOLD = 1.0  # cm
 
@@ -153,10 +165,10 @@ def track_take(video: str | Path, models: Path, setup: Setup = setups.CARPET) ->
     return tracked
 
 
-def to_episodes(tracked: list[TrackedClip]) -> list[Episode]:
+def to_episodes(tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED) -> list[Episode]:
     """Episodes from tracked clips: each trimmed to the hand leaving, labelled push or near-miss, and split.
-    Clips with a problem (see TrackedClip.problem) are left out."""
-    usable = sorted((t for t in tracked if t.problem is None), key=lambda t: t.name)
+    Clips with a problem (see TrackedClip.problem) and the `excluded` clips are left out, before the split."""
+    usable = sorted((t for t in tracked if t.problem is None and t.name not in excluded), key=lambda t: t.name)
     held_out = _held_out([t.name for t in usable], [t.kind for t in usable])
     episodes = []
     for t in usable:
@@ -190,11 +202,12 @@ def build(raw_dir: Path, setup: Setup = setups.CARPET) -> list[Episode]:
 
 
 def _held_out(names: list[str], kinds: list[str]) -> set[str]:
-    """The held-out clips: HELD_OUT of each kind (at most half of that kind), drawn by a fixed seed."""
+    """The held-out clips: FIRST_HELD_OUT from the first takes, and NEW_HELD_OUT of each kind (at most half of
+    that kind) drawn by a fixed seed over the later takes."""
+    held_out = set(FIRST_HELD_OUT) & set(names)
     rng = np.random.default_rng(SEED)
-    held_out = set()
-    for kind, wanted in HELD_OUT.items():
-        of_kind = sorted(n for n, k in zip(names, kinds) if k == kind)
+    for kind, wanted in NEW_HELD_OUT.items():
+        of_kind = sorted(n for n, k in zip(names, kinds) if k == kind and not n.startswith(FIRST_TAKES))
         n = min(wanted, len(of_kind) // 2)
         held_out |= {of_kind[i] for i in rng.permutation(len(of_kind))[:n]}
     return held_out
