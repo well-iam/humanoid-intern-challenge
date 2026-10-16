@@ -110,8 +110,7 @@ def transcode(src: Path, dst: Path, height: int = VIDEO_HEIGHT) -> None:
                     small = frame.reformat(width=width, height=height, format="yuv420p")
                     small.pts, small.time_base = frame.pts, frame.time_base
                     out.mux(vout.encode(small))
-                else:
-                    frame.pts = None
+                else:  # each sound keeps its time against the frames: the claps cut the take
                     out.mux(aout.encode(frame))
         out.mux(vout.encode(None))
         if inp.streams.audio:

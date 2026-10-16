@@ -1,6 +1,10 @@
 """What the public Hugging Face dataset holds, picked from the run folder."""
 
-from pwm import hub
+import numpy as np
+import pytest
+
+from pwm import hub, stages
+from pwm.datasets import clips
 
 KEPT = [
     "clips/episodes/VID_1-01.npz",  # my clips' tracks and straightened frames
@@ -59,3 +63,17 @@ def test_the_public_dataset_holds_my_clips_and_results_but_no_test_takes_push_t_
     assert sorted(files) == sorted(KEPT)
     assert all(files[path] == tmp_path / path for path in KEPT)
     assert hub.public_videos(tmp_path) == {"clips/videos/VID_1.mp4": tmp_path / "clips/raw/VID_1.mp4"}
+
+
+@pytest.mark.slow
+def test_the_720p_copy_of_a_take_keeps_its_claps_where_they_were(tmp_path):
+    # The claps cut a take into clips, so the copy's sound must stay in step with its frames.
+    take = stages.data_root() / "clips" / "test-take" / "VID_20261016_095359.mp4"
+    if not take.exists():
+        pytest.skip(f"needs the test take at {take}")
+
+    hub.transcode(take, tmp_path / "copy.mp4")
+
+    original = clips._claps(*clips._loudness(take))
+    copy = clips._claps(*clips._loudness(tmp_path / "copy.mp4"))
+    np.testing.assert_allclose(copy, original, atol=0.005)
