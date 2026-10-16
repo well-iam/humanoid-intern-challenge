@@ -6,19 +6,22 @@ I trained a small world model that predicts where a pushed object will go, check
 
 ![My clip, the model's prediction, the Panda replay](assets/gif-strip.gif)
 
-Left: one of my held-out clips (palm in green). Middle: what the predictor expected 1 s earlier, from the frames it had then and my real palm moves. A prediction is a feature vector, not an image, so I show the training frame whose features are closest to it. Right: the Panda replaying my palm path in MuJoCo. The clip is not the best one: of the 3 held-out pushes where I know where the palm was at contact, it is the one with the median replay error (4.5 cm; the box also ends 41° off).
+*Left:* one of my held-out clips (palm in green). 
+*Middle:* what the model expected this moment to look like, 1 s before it happened, given my palm's moves. A prediction is a feature vector, not an image, so I show the training frame whose features are closest to it. 
+*Right:* the Panda replaying my palm path in MuJoCo. 
+Note: I picked a typical clip, not the best: the robot's box ends 4.5 cm from where my real box ended, and turned 41° differently.
 
 ## In short
 
 What worked:
-- **Push-T** (a public dataset of a round pusher moving a T-shaped block): 2 s ahead, the predictor's error is 25% below the same model trained without the pusher's moves, and 59% below "nothing moves". It passed my fixed pass mark on 1 of 3 training seeds.
-- **My own 115 clips:** both pass marks pass. The box's position is read within 1.24 cm, and 1 s ahead the predictor is 32% below the model without the pusher's moves. My first 30 clips failed both; more clips fixed it.
-- **The robot:** my palm paths drive a simulated Panda arm. The box ends a median 3.8 to 4.7 cm from where my real box ended (it moved about 15 cm). On all 35 near-misses, the arm passes the box without moving it.
+- ✅ **Push-T** (a public dataset of a round pusher moving a T-shaped block): 2 s ahead, the predictor's error is 25% below the same model trained without the pusher's moves, and 59% below "nothing moves". My pass mark was 20%, fixed before any result. It passed on 1 of 3 training runs with different random starts.
+- ✅ **My own 115 clips:** both pass marks I fixed in advance pass. The box's position is read from a real frame within 1.24 cm (2 cm needed). 1 s ahead, the predictor's error is 32% below the same model without my hand's moves (20% needed). My first 30 clips failed both; more clips fixed it.
+- ✅ **The robot:** my palm paths drive a simulated Panda arm. After a push of about 15 cm, its box typically ends about 4 cm from where my real box ended. On all 35 near-misses, the arm passes the box without moving it.
 
 What didn't:
-- **Near-misses:** when my hand passes the box, the predictor still moves it 1.44 cm, twice the measurement noise.
-- **Choosing a push:** the model ranks 32 candidate pushes roughly like the simulator does, but its single top pick is worse than a random one.
-- **The box's angle** in the robot replay: 25° off.
+- ❌ **Near-misses:** when my hand passes the box without touching it, the predictor still moves the box 1.44 cm in 1 s. Reading the real, still box from the real frames already wobbles by 0.67 cm, so about half of that is real error.
+- ❌ **Choosing a push:** the model ranks 32 candidate pushes roughly like the simulator does, but its single top pick is worse than a random one.
+- ❌ **The box's angle** in the robot replay: 25° off.
 
 ## The idea
 
