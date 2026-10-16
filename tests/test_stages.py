@@ -188,3 +188,24 @@ def test_embedding_again_encodes_only_the_episodes_not_cached_yet(tmp_path, monk
     embeddings = stages.load_embeddings("toy", "counting", episodes, root=tmp_path)
     assert len(embeddings) == 61
     np.testing.assert_allclose(embeddings[-1], ToyEncoder().encode(new.frames), atol=1e-3)
+
+
+def test_the_figures_are_redrawn_from_the_saved_results_alone(tmp_path):
+    # The notebook's fast path: no episodes, no embeddings, no predictors, only the saved results.
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    for seed in (0, 1):
+        stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3, seed=seed)
+        stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3, seed=seed)
+        stages.evaluate("toy", "toy", root=tmp_path, seed=seed)
+    stages.near_miss("toy", "toy", root=tmp_path)
+    for path in [*tmp_path.rglob("*.png"), *tmp_path.rglob("*.npz"), *tmp_path.rglob("*.npy"), *tmp_path.rglob("*.pt")]:
+        path.unlink()
+
+    drawn = stages.redraw(root=tmp_path)
+
+    folder = tmp_path / "toy" / "toy"
+    expected = {folder / "error-vs-horizon.png", folder / "seed-1" / "error-vs-horizon.png",
+                folder / "error-vs-horizon-seeds.png", folder / "near-miss.png"}
+    assert set(drawn) == expected
+    assert all(path.read_bytes().startswith(b"\x89PNG") for path in expected)

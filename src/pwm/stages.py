@@ -25,6 +25,7 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/winner.json               the winning encoder and why            (compare)
     <root>/<dataset>/<encoder>/ranking/        ranking.json, report.md, ranking.png   (rank)
 
+`redraw` redraws every figure above that comes from the saved results alone (no GPU, no embeddings).
 The root is the `root` argument, else the PWM_DATA environment variable, else ./data.
 """
 
@@ -363,6 +364,40 @@ def rank(
     report.save(out)
     plot_ranking(report, out / "ranking.png", ENCODER_NAMES.get(encoder, encoder))
     return report
+
+
+def redraw(root: str | Path | None = None) -> list[Path]:
+    """Redraw every figure that comes from saved results alone (results.json, near-miss.json,
+    ranking.json), with no episodes, embeddings or predictors: each run's error-vs-horizon.png,
+    each dataset's encoder comparison (if it has several evaluated encoders), each encoder's
+    seed comparison, the near-miss test and the ranking test. Returns the figures drawn."""
+    drawn = []
+    for dataset in sorted(p for p in data_root(root).iterdir() if p.is_dir()):
+        evaluated = {}
+        for results in sorted(dataset.glob("*/results.json")):
+            run, encoder = results.parent, results.parent.name
+            name = ENCODER_NAMES.get(encoder, encoder)
+            report = Report.load(run)
+            if PREDICTOR in report.errors:
+                evaluated[encoder] = report
+            trained_seeds = [0] + sorted(int(p.parent.name.removeprefix("seed-")) for p in run.glob("seed-*/results.json"))
+            for seed in trained_seeds:
+                folder = run_folder(dataset.name, encoder, root, seed)
+                plot_errors({f"{name} on {dataset.name}": Report.load(folder)}, folder / "error-vs-horizon.png")
+                drawn.append(folder / "error-vs-horizon.png")
+            if len(trained_seeds) > 1:
+                seeds(dataset.name, encoder, trained_seeds, root)
+                drawn.append(run / "error-vs-horizon-seeds.png")
+            if (run / "near-miss.json").exists():
+                plot_near_miss(NearMiss.load(run), run / "near-miss.png", f"{name}, {dataset.name}")
+                drawn.append(run / "near-miss.png")
+            if (run / "ranking" / "ranking.json").exists():
+                plot_ranking(RankingReport.load(run / "ranking"), run / "ranking" / "ranking.png", name)
+                drawn.append(run / "ranking" / "ranking.png")
+        if len(evaluated) > 1:
+            plot_errors(evaluated, dataset / "error-vs-horizon.png")
+            drawn.append(dataset / "error-vs-horizon.png")
+    return drawn
 
 
 def run_folder(dataset: str, encoder: str, root: str | Path | None = None, seed: int = 0) -> Path:
