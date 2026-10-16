@@ -65,6 +65,9 @@ class Probe:
             a = _solve(gram, y - y_mean, ridge)
             if a is not None:
                 break
+        if a is None:
+            raise ValueError("no ridge strength up to the largest tried makes the probe solvable "
+                             "(an embedding may hold NaN or inf values)")
         a = a.float().to(device)
         weights = np.zeros((f, 2), np.float32)
         for cols in blocks:

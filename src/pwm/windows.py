@@ -37,6 +37,9 @@ class Windows:
 def make_windows(episodes: list[Episode], step: float, future: int, context: int = CONTEXT) -> Windows:
     """Windows of `context` frames plus `future` steps from each episode; `step` is in seconds."""
     length = context + future
+    if not episodes:
+        return Windows(context, np.zeros(0, int), np.zeros((0, length), int), np.zeros((0, length, 2)),
+                       np.zeros((0, length, 2)))
     episode_ids, frames = [], []
     for i, ep in enumerate(episodes):
         stride = _stride(ep, step)

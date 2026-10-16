@@ -25,7 +25,7 @@ import torch
 
 from pwm.episodes import Episode
 from pwm.probe import Probe
-from pwm.windows import make_windows
+from pwm.windows import Windows, make_windows
 
 HORIZONS = [1, 2, 4, 8]
 BATCH = 32  # windows per rollout call; real predictions are 8 x 256 x 1024 floats per window
@@ -242,11 +242,12 @@ def evaluate(
     `move_threshold` is in table units: a window is moving at horizon h if the object moves
     further than this from its current position within h steps.
     """
-    train = [i for i, ep in enumerate(episodes) if ep.split == "train"]
     held_out = [ep for ep in episodes if ep.split == "held-out"]
     held_out_embeddings = [embeddings[i] for i, ep in enumerate(episodes) if ep.split == "held-out"]
+    if not held_out:
+        raise ValueError("no held-out episodes to score")
 
-    probe = Probe.fit([embeddings[i] for i in train], [episodes[i].object_pos for i in train])
+    probe = _fit_probe(episodes, embeddings)
     probe_pos = [probe.predict(e) for e in held_out_embeddings]
     probe_error = np.mean(np.concatenate([_dist(p, ep.object_pos) for p, ep in zip(probe_pos, held_out)]))
 
@@ -266,18 +267,10 @@ def evaluate(
         runs[REVERSED] = (predictor, -actions)
         runs[SHUFFLED] = (predictor, actions[np.random.default_rng(seed).permutation(len(actions))])
 
-    per_window = {}
-    for name, (rollout, run_actions) in runs.items():
-        errors = []
-        for b in range(0, len(windows), BATCH):
-            rows = slice(b, b + BATCH)
-            predicted = rollout(
-                windows.gather(held_out_embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], run_actions[rows]
-            )
-            n, steps = predicted.shape[:2]
-            predicted_pos = probe.predict(predicted.reshape(n * steps, *predicted.shape[2:])).reshape(n, steps, 2)
-            errors.append(_dist(predicted_pos, future[rows]))
-        per_window[name] = np.concatenate(errors) if errors else np.zeros((0, max(horizons)))
+    per_window = {
+        name: _dist(_rolled_out_positions(rollout, windows, held_out_embeddings, run_actions, probe), future)
+        for name, (rollout, run_actions) in runs.items()
+    }
     per_window[PROBE_FLOOR] = _dist(windows.gather(probe_pos, cols=slice(c, None)), future)
 
     return Report(
@@ -364,14 +357,17 @@ def near_miss(
     horizons: list[int] = HORIZONS,
 ) -> NearMiss:
     """The near-miss test (see NearMiss) for the given rollout functions, on held-out episodes."""
-    train = [i for i, ep in enumerate(episodes) if ep.split == "train"]
-    probe = Probe.fit([embeddings[i] for i in train], [episodes[i].object_pos for i in train])
+    probe = _fit_probe(episodes, embeddings)
     models = {name: rollout for name, rollout in ((PREDICTOR, predictor), (BLIND, blind)) if rollout is not None}
 
     n_windows, displacement = {}, {}
     for kind in ("push", "near-miss"):
         ids = [i for i, ep in enumerate(episodes) if ep.split == "held-out" and ep.kind == kind]
         held_out, held_embeddings = [episodes[i] for i in ids], [embeddings[i] for i in ids]
+        if not held_out:  # e.g. Push-T has neither kind; scoring only some takes may pick none of one kind
+            n_windows[kind] = [0] * len(horizons)
+            displacement[kind] = {name: [float("nan")] * len(horizons) for name in (TRUE, REAL, *models)}
+            continue
         windows = make_windows(held_out, step, future=max(horizons))
         c = windows.context
         track = windows.object_pos if kind == "push" else windows.pusher_pos  # what must move in the window
@@ -386,16 +382,7 @@ def near_miss(
         }
         actions = windows.actions[:, c - 1 :]
         for name, rollout in models.items():
-            out = []
-            for b in range(0, len(windows), BATCH):
-                rows = slice(b, b + BATCH)
-                predicted = rollout(
-                    windows.gather(held_embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], actions[rows]
-                )
-                n, steps = predicted.shape[:2]
-                predicted_pos = probe.predict(predicted.reshape(n * steps, *predicted.shape[2:])).reshape(n, steps, 2)
-                out.append(_dist(predicted_pos, now[rows]))
-            moves[name] = np.concatenate(out) if out else np.zeros((0, max(horizons)))
+            moves[name] = _dist(_rolled_out_positions(rollout, windows, held_embeddings, actions, probe), now)
 
         n_windows[kind] = [int(m.sum()) for m in picked]
         displacement[kind] = {
@@ -405,6 +392,26 @@ def near_miss(
         unit=episodes[0].unit, step=step, move_threshold=move_threshold, horizons=list(horizons),
         n_windows=n_windows, displacement=displacement,
     )
+
+
+def _fit_probe(episodes: list[Episode], embeddings: list[np.ndarray]) -> Probe:
+    """The probe, fitted on the real embeddings of the training episodes only."""
+    train = [i for i, ep in enumerate(episodes) if ep.split == "train"]
+    return Probe.fit([embeddings[i] for i in train], [episodes[i].object_pos for i in train])
+
+
+def _rolled_out_positions(rollout, windows: Windows, embeddings: list[np.ndarray], actions: np.ndarray,
+                          probe: Probe) -> np.ndarray:
+    """The probe's object positions (N, H, 2) on the embeddings `rollout` predicts for each window, from its real
+    context frames and the given actions (N, H, 2), BATCH windows at a time."""
+    c = windows.context
+    out = [np.zeros((0, actions.shape[1], 2))]
+    for b in range(0, len(windows), BATCH):
+        rows = slice(b, b + BATCH)
+        predicted = rollout(windows.gather(embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], actions[rows])
+        n, steps = predicted.shape[:2]
+        out.append(probe.predict(predicted.reshape(n * steps, *predicted.shape[2:])).reshape(n, steps, 2))
+    return np.concatenate(out)
 
 
 def _dist(a: np.ndarray, b: np.ndarray) -> np.ndarray:

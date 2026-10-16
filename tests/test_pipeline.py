@@ -8,7 +8,9 @@ import pytest
 from pwm.datasets import toy
 from pwm.encoders.toy import ToyEncoder
 from pwm.episodes import Episode
-from pwm.evaluator import PROBE_FLOOR, STATIC, evaluate
+from pwm.evaluator import PROBE_FLOOR, STATIC, evaluate, near_miss, static_baseline
+from pwm.probe import Probe
+from pwm.windows import make_windows
 
 
 def run(episodes):
@@ -106,3 +108,38 @@ def test_moving_windows_are_those_where_the_object_moves_more_than_the_threshold
     # so s + 4 is in 4..23. A window moves at horizon h if the current frame is <= 15
     # and the frame h steps ahead is >= 16: current frames 14-15, 12-15, 8-15, 4-15.
     assert report.n_moving == [2, 4, 8, 12]
+
+
+def test_no_episodes_give_no_windows():
+    windows = make_windows([], toy.STEP, future=8)
+
+    assert len(windows) == 0
+    assert windows.object_pos.shape == windows.pusher_pos.shape == (0, 11, 2)
+
+
+def test_the_near_miss_test_runs_when_no_held_out_episode_is_a_push(toy_episodes):
+    # Push-T's episodes are neither; scoring only some takes may pick no clip of one kind.
+    episodes = [ep for ep in toy_episodes if ep.split == "train" or ep.kind == "near-miss"]
+    encoder = ToyEncoder()
+
+    test = near_miss(episodes, [encoder.encode(ep.frames) for ep in episodes], toy.STEP, toy.MOVE_THRESHOLD,
+                     predictor=static_baseline)
+
+    assert test.n_windows["push"] == [0, 0, 0, 0]
+    assert np.isnan(test.displacement["push"]["predictor"]).all()
+    assert test.n_windows["near-miss"][-1] > 0
+
+
+def test_scoring_with_no_held_out_episode_says_so(toy_episodes):
+    with pytest.raises(ValueError, match="no held-out episodes"):
+        run(train_only(toy_episodes))
+
+
+def test_a_probe_that_no_ridge_strength_can_solve_says_why():
+    # E.g. an embedding that overflowed fp16: one infinite value makes every ridge system unsolvable.
+    rng = np.random.default_rng(0)
+    embeddings = [rng.standard_normal((10, 4, 3)).astype(np.float32) for _ in range(10)]
+    embeddings[3][2, 0, 0] = np.inf
+
+    with pytest.raises(ValueError, match="no ridge strength"):
+        Probe.fit(embeddings, [rng.standard_normal((10, 2)) for _ in range(10)])
