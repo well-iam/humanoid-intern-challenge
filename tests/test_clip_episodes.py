@@ -87,6 +87,15 @@ def test_an_excluded_clip_is_left_out_before_the_draw():
     assert sum(ep.split == "held-out" for ep in kept) == 10
 
 
+def test_a_clip_cut_before_the_hand_comes_back_to_reset_the_object_ends_there_and_is_labelled_on_what_is_left():
+    # The object moves from 0.5 s: in the real clip that is the hand coming back to reset it after a near-miss.
+    clips = [made_up_clip("reset", 5.0), made_up_clip("push", 5.0)]
+    episodes = {ep.name: ep for ep in tracking.to_episodes(clips, cut_at={"reset": 0.5})}
+    assert episodes["reset"].kind == "near-miss"
+    assert episodes["reset"].timestamps[-1] < 0.5
+    assert episodes["push"].kind == "push" and len(episodes["push"].timestamps) == 12
+
+
 def test_a_small_set_holds_out_at_most_half_of_each_kind():
     # The 3-clip test take: 2 pushes and a near-miss.
     episodes = tracking.to_episodes(friday(n_push=2, n_near_miss=1))

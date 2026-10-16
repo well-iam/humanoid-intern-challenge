@@ -26,7 +26,7 @@
 """
 
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import cv2
@@ -66,6 +66,9 @@ SEED = 0
 # Clips left out of the episodes: the clap rule cut them, but they are not a push or a near-miss (checked by eye
 # on the frames). Clip name -> why.
 EXCLUDED: dict[str, str] = {}
+# Clips cut short (seconds after the clap): a near-miss after which, still inside the 6 s cap, the hand came
+# back to reset the object. The episode ends before the hand comes back, so the reset does not make it a push.
+CUT_AT: dict[str, float] = {}
 STEP = 0.25  # seconds: every 2nd frame at 8 fps, two interleaved sequences
 MOVE_THRESHOLD = 1.0  # cm
 
@@ -165,9 +168,13 @@ def track_take(video: str | Path, models: Path, setup: Setup = setups.CARPET) ->
     return tracked
 
 
-def to_episodes(tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED) -> list[Episode]:
-    """Episodes from tracked clips: each trimmed to the hand leaving, labelled push or near-miss, and split.
-    Clips with a problem (see TrackedClip.problem) and the `excluded` clips are left out, before the split."""
+def to_episodes(
+    tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED, cut_at: dict[str, float] = CUT_AT
+) -> list[Episode]:
+    """Episodes from tracked clips: each trimmed to the hand leaving (or to its `cut_at` time), labelled push or
+    near-miss, and split. Clips with a problem (see TrackedClip.problem) and the `excluded` clips are left out,
+    before the split."""
+    tracked = [cut(t, cut_at[t.name]) if t.name in cut_at else t for t in tracked]
     usable = sorted((t for t in tracked if t.problem is None and t.name not in excluded), key=lambda t: t.name)
     held_out = _held_out([t.name for t in usable], [t.kind for t in usable])
     episodes = []
@@ -199,6 +206,12 @@ def build(raw_dir: Path, setup: Setup = setups.CARPET) -> list[Episode]:
     raw_dir = Path(raw_dir)
     models = raw_dir.resolve().parents[1] / "models"
     return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models, setup)])
+
+
+def cut(clip: TrackedClip, seconds: float) -> TrackedClip:
+    """The clip ending before `seconds` after the clap, as if the hand had left then."""
+    kept = min(clip.kept, int(np.searchsorted(clip.timestamps, seconds)))
+    return replace(clip, kept=kept, left=float(clip.timestamps[kept - 1]))
 
 
 def _held_out(names: list[str], kinds: list[str]) -> set[str]:

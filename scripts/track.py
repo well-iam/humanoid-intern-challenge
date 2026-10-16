@@ -70,6 +70,7 @@ for video in videos:
         traceback.print_exc()
         failed.append((video.name, str(error)))
         continue
+    take = [tracking.cut(t, tracking.CUT_AT[t.name]) if t.name in tracking.CUT_AT else t for t in take]
     tracked += take
     frames = []
     for clip in take:
@@ -149,7 +150,9 @@ for t in tracked:
         continue
     k = t.kept
     x, y = t.object_pos[0]
-    flags = ([f"excluded: {tracking.EXCLUDED[t.name]}"] if t.name in tracking.EXCLUDED else []) + t.flags
+    flags = ([f"excluded: {tracking.EXCLUDED[t.name]}"] if t.name in tracking.EXCLUDED else []) + (
+        [f"cut at {tracking.CUT_AT[t.name]:g} s: the hand comes back to reset the object"] if t.name in tracking.CUT_AT else []
+    ) + t.flags
     lines.append(
         f"| {t.name} | {t.kind} | {split.get(t.name, 'excluded')} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "
         f"| {t.palm_seen[:k].sum()}/{k} | {t.object_seen[:k].sum()}/{k} "
