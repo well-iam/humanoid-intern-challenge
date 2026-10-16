@@ -16,7 +16,7 @@
   look shifted away from the point under the lens and slightly too big. Points are moved back toward that point
   (taken as the image centre) by the ratio of heights: true = nadir + (seen - nadir) * (camera - h) / camera.
 - Setup: the camera height, the object's size and colour and where the square lies come from the take's setup
-  (pwm.datasets.setups); by default CARPET, the real takes' setup.
+  (pwm.datasets.setups.of_take): CARPET, the real takes' setup, except the morning test take (WOOD).
 - Conversion check: the A4 sheet under the marker is measured in every clip; it lies flat on the table, so
   its size checks the whole pixel-to-cm conversion.
 - Episodes: each clip ends at the last frame where the hand is found (the hand left the view). It is a push if
@@ -154,9 +154,11 @@ def hand_model(models: Path) -> Path:
     return path
 
 
-def track_take(video: str | Path, models: Path, setup: Setup = setups.CARPET) -> list[TrackedClip]:
-    """Cut a take into clips and track the palm and the object in each."""
+def track_take(video: str | Path, models: Path, setup: Setup | None = None) -> list[TrackedClip]:
+    """Cut a take into clips and track the palm and the object in each, in `setup` (default: the take's own,
+    found by its name)."""
     video = Path(video)
+    setup = setup or setups.of_take(video.stem)
     take = clips.cut_take(video, setup.square)
     stills, hands = _scan(video, take, hand_model(models))
     tracked = []
@@ -207,12 +209,13 @@ def to_episodes(tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED)
     return episodes
 
 
-def build(raw_dir: Path, setup: Setup = setups.CARPET) -> list[Episode]:
-    """Dataset-adapter entry point: every take (*.mp4) in `raw_dir`, cut, tracked and split. The hand model is
-    kept in <root>/models, the raw folder being <root>/<dataset>/raw (or <root>/clips/test-take)."""
+def build(raw_dir: Path) -> list[Episode]:
+    """Dataset-adapter entry point: every take (*.mp4) in `raw_dir`, cut, tracked (each in its own setup) and
+    split. The hand model is kept in <root>/models, the raw folder being <root>/<dataset>/raw (or
+    <root>/clips/test-take)."""
     raw_dir = Path(raw_dir)
     models = raw_dir.resolve().parents[1] / "models"
-    return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models, setup)])
+    return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models)])
 
 
 def first_visit(clip: TrackedClip) -> TrackedClip:

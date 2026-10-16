@@ -1,8 +1,8 @@
 """Takes -> tracked episodes, with a check report, overlay GIFs and a static-baseline report.
 
 Every take (*.mp4) in the dataset's raw folder (Friday's takes: <root>/clips/raw/) is cut into clips, and the
-palm and the object are tracked in each. All takes are in one setup, SETUP (camera height, object, square; see
-pwm.datasets.setups). The episodes go to <root>/<dataset>/episodes/ and the checks to
+palm and the object are tracked in each, in the take's setup (camera height, object, square; see
+pwm.datasets.setups.of_take). The episodes go to <root>/<dataset>/episodes/ and the checks to
 <root>/<dataset>/tracking/: report.md and one <take>.gif per take (palm and object drawn on the straightened
 frames). Then the toy encoder gives a static-baseline report in <root>/<dataset>/toy/.
 
@@ -20,7 +20,6 @@ from pwm import stages
 from pwm.datasets import clips, setups, tracking
 from pwm.evaluator import STATIC
 
-SETUP = setups.CARPET  # the real takes: the white box on the carpet
 GIF_SIZE = 256
 SEEN, NOT_SEEN = (40, 220, 40), (150, 150, 150)
 
@@ -36,11 +35,15 @@ videos = sorted(raw.glob("*.mp4"))
 assert videos, f"no takes (*.mp4) in {raw}"
 
 
+def setup_of(clip: tracking.TrackedClip) -> setups.Setup:
+    return setups.of_take(clip.name.rsplit("-", 1)[0])
+
+
 def overlay(clip: tracking.TrackedClip, path) -> None:
     """The clip's straightened frames with the object's footprint and the palm drawn on, frames after the hand
     left dimmed. Grey marks: not seen in that frame (held or filled)."""
     scale = GIF_SIZE / clips.WORKSPACE
-    corners = tracking.object_corners(clip.object_pos, clip.object_angle, SETUP.object_size) * scale
+    corners = tracking.object_corners(clip.object_pos, clip.object_angle, setup_of(clip).object_size) * scale
     frames = []
     for t, image in enumerate(clip.frames):
         im = Image.fromarray(image).resize((GIF_SIZE, GIF_SIZE), Image.LANCZOS)
@@ -65,7 +68,7 @@ tracked, failed, came_back = [], [], set()
 for video in videos:
     print(f"Tracking {video.name} ...", flush=True)
     try:
-        take = tracking.track_take(video, models=root / "models", setup=SETUP)
+        take = tracking.track_take(video, models=root / "models")
     except Exception as error:  # one bad take must not stop the others
         traceback.print_exc()
         failed.append((video.name, str(error)))
@@ -87,8 +90,7 @@ split = {ep.name: ep.split for ep in episodes}
 usable = [t for t in tracked if t.problem is None and t.name not in tracking.EXCLUDED]
 kinds = [t.kind for t in usable]
 sheets = np.array([t.sheet for t in tracked])
-sizes = np.array([t.object_size for t in usable])
-width, length, height = SETUP.object_size
+objects = sorted({setup_of(t).object_size for t in usable})
 
 
 def cm(value: float) -> str:
@@ -120,7 +122,8 @@ if len(tracked):
         f"hand-free second (a side the frame's edge cuts is left out): {'; '.join(measured) or 'cut in every clip'}.",
         "",
     ]
-if len(usable):
+for width, length, height in objects:  # one object per setup
+    sizes = np.array([t.object_size for t in usable if setup_of(t).object_size == (width, length, height)])
     error = np.abs(sizes - [width, length])
     lines += [
         "## Pixel-to-cm check: the object's top face",

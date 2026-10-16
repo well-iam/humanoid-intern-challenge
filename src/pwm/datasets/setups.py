@@ -1,7 +1,8 @@
 """Recording setups: what changes with the room, the camera mount and the object.
 
 A take is recorded in one setup. CARPET is the real takes' setup and the default everywhere; WOOD is the
-morning test take of 16 Oct, kept so its numbers can be reproduced. Both use the same printed marker.
+morning test take of 16 Oct, kept so its numbers can be reproduced. Both use the same printed marker. `of_take`
+gives a take's setup by its name.
 """
 
 from dataclasses import dataclass
@@ -53,3 +54,11 @@ WOOD = Setup(
     object_size=(11.0, 13.0, 2.0),
     object_pixels=_dark_not_orange,
 )
+
+
+TAKES = {"VID_20261016_095359": WOOD}  # the takes not recorded in CARPET, by name (the video's file name stem)
+
+
+def of_take(take: str) -> Setup:
+    """The setup the take named `take` was recorded in."""
+    return TAKES.get(take, CARPET)

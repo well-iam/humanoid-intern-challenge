@@ -167,3 +167,10 @@ def test_the_a4_sheet_is_unmeasured_when_the_marker_sits_at_the_frames_edge():
     marker = still_clip([[460, 300], [639, 300], [639, 479], [460, 479]])
 
     assert tracking.sheet_size(pale, marker).shape == (2,)
+
+
+def test_each_take_is_tracked_in_the_setup_it_was_recorded_in():
+    # clips/test-take holds the morning wallet-on-wood take next to carpet takes.
+    assert setups.of_take("VID_20261016_095359") is setups.WOOD
+    assert setups.of_take("VID_20261016_131201") is setups.CARPET
+    assert setups.of_take("VID_20261016_141304") is setups.CARPET

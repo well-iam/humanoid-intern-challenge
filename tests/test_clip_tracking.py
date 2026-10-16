@@ -139,11 +139,12 @@ def test_the_test_take_runs_through_the_toy_encoder_to_a_static_baseline_report(
 
 def test_the_morning_test_take_still_gives_its_numbers_in_its_own_setup():
     # The wallet on wood (16 Oct morning, setup WOOD): the A4 sheet whole, the wallet seen as about 11 x 13 cm in
-    # every clip (decided 16 Oct), and by eye clips 1 and 2 push it, clip 3 passes beside it.
+    # every clip (decided 16 Oct), and by eye clips 1 and 2 push it, clip 3 passes beside it. The setup is found
+    # by the take's name.
     video = stages.data_root() / "clips" / "test-take/VID_20261016_095359.mp4"
     if not video.exists():
         pytest.skip(f"needs the morning test take at {video}")
-    tracked = tracking.track_take(video, models=stages.data_root() / "models", setup=setups.WOOD)
+    tracked = tracking.track_take(video, models=stages.data_root() / "models")
     sizes = np.array([clip.object_size for clip in tracked])
     np.testing.assert_allclose([clip.sheet for clip in tracked], [[29.7, 21.0]] * 3, atol=0.5)
     np.testing.assert_allclose(sizes, [[11.0, 13.0]] * 3, atol=0.5)

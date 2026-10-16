@@ -21,7 +21,8 @@ DATASETS = {
     "pusht": Dataset(build=pusht.build, step=pusht.STEP, move_threshold=pusht.MOVE_THRESHOLD),
     # My takes: Friday's recordings go in <root>/clips/raw/.
     "clips": Dataset(build=tracking.build, step=tracking.STEP, move_threshold=tracking.MOVE_THRESHOLD),
-    # The 3-clip test take: a setup check only, never project data, so it is a dataset of its own.
+    # The test takes: setup checks only, never project data, so a dataset of its own. Each take is tracked in its
+    # own setup (pwm.datasets.setups.of_take): the morning one is the wallet on wood.
     "clips-test-take": Dataset(
         build=tracking.build, step=tracking.STEP, move_threshold=tracking.MOVE_THRESHOLD, raw="clips/test-take"
     ),
