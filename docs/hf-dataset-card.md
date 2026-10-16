@@ -41,6 +41,7 @@ snapshot_download("<HF_REPO_ID>", repo_type="dataset", local_dir="pwm-data")
 | `clips/dinov2/predictor.pt`, `predictor-blind.pt` | the trained predictor and the action-blind predictor |
 | `clips/dinov2/` | results, reports and figures: error vs horizon, near-miss test, retrievals, training curves |
 | `clips/panda/` | the Panda replay of every clip (`replay.json`) and GIFs |
+| `clips/gif-strip/` | a held-out clip, the predictor's view one second ahead (nearest real frame) and the Panda replay, side by side |
 | `clips/logs/` | training logs (batch loss every 100 steps) |
 | `clips/aruco-a4.pdf` | the printed marker that fixes the table frame |
 
