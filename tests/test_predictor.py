@@ -23,10 +23,11 @@ from pwm.predictor import train
 
 ENCODER = ToyEncoder()
 TOY = dict(size="tiny", batch_size=32)
-# Training to generalise takes ~1500 steps, about 30 s per predictor on a GPU and several
-# minutes on a laptop CPU, so it uses the GPU when there is one.
+# Training to generalise takes ~1500 steps, about 25 s per predictor on a GPU and several
+# minutes on a laptop CPU, so it uses the GPU when there is one, and those tests are slow.
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 NO_GPU = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA GPU")
+TRAINED = pytest.mark.slow  # the tests of the predictors trained to generalise
 
 
 def embed(episodes):
@@ -39,7 +40,9 @@ def toy_episodes():
 
 
 @pytest.mark.parametrize(
-    "device, precision", [("cpu", "fp32"), pytest.param("cuda", "fp16", marks=NO_GPU)], ids=["cpu-fp32", "gpu-fp16"]
+    "device, precision",
+    [pytest.param("cpu", "fp32", marks=pytest.mark.slow), pytest.param("cuda", "fp16", marks=NO_GPU)],  # CPU: 20 s
+    ids=["cpu-fp32", "gpu-fp16"],
 )
 def test_predictor_memorises_one_episode(toy_episodes, device, precision):
     train_episodes = [ep for ep in toy_episodes if ep.split == "train"]
@@ -79,18 +82,21 @@ def at_horizon_4_on_moving_windows(report, row):
     return report.errors[row]["moving"][report.horizons.index(4)]
 
 
+@TRAINED
 def test_trained_predictor_beats_both_baselines_on_held_out_episodes(toy_report):
     error = {row: at_horizon_4_on_moving_windows(toy_report, row) for row in (PREDICTOR, STATIC, BLIND)}
     assert error[PREDICTOR] < error[STATIC], error
     assert error[PREDICTOR] < error[BLIND], error
 
 
+@TRAINED
 def test_wrong_pusher_actions_raise_the_error(toy_report):
     error = {row: at_horizon_4_on_moving_windows(toy_report, row) for row in (PREDICTOR, REVERSED, SHUFFLED)}
     assert error[REVERSED] > error[PREDICTOR], error
     assert error[SHUFFLED] > error[PREDICTOR], error
 
 
+@TRAINED
 def test_the_predictor_keeps_the_object_still_when_the_pusher_misses_it(toy_episodes, toy_models):
     embeddings, predictor, blind = toy_models
     test = near_miss(toy_episodes, embeddings, toy.STEP, toy.MOVE_THRESHOLD, predictor=predictor.rollout,
