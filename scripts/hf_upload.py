@@ -5,7 +5,7 @@ Needs a write token: `hf auth login` once, or HF_TOKEN set. Creates the repo if 
 clips/, then pusht/), so a broken connection costs one part. Files already on the Hub are skipped, so rerunning
 resumes.
 
-    uv run python scripts/hf_upload.py --repo-id <user>/pushing-world-model --folder C:/Users/william.notaro/dev/pwm-data/hf-staging
+    uv run python scripts/hf_upload.py --repo-id well-iam/humanoid-intern-challenge --folder C:/Users/william.notaro/dev/pwm-data/hf-staging
 """
 
 import argparse
@@ -16,7 +16,7 @@ from huggingface_hub import HfApi
 PLACEHOLDER = "<HF_REPO_ID>"  # in the dataset card (docs/hf-dataset-card.md)
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("--repo-id", required=True, help="e.g. <user>/pushing-world-model")
+parser.add_argument("--repo-id", required=True, help="e.g. well-iam/humanoid-intern-challenge")
 parser.add_argument("--folder", required=True, help="the staging folder")
 parser.add_argument("--private", action="store_true", help="create the repo private")
 args = parser.parse_args()

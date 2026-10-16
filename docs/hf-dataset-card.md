@@ -22,7 +22,7 @@ The project's Colab notebook downloads this dataset and rebuilds every figure an
 ```python
 from huggingface_hub import snapshot_download
 
-snapshot_download("<HF_REPO_ID>", repo_type="dataset", local_dir="pwm-data")
+snapshot_download("well-iam/humanoid-intern-challenge", repo_type="dataset", local_dir="pwm-data")
 ```
 
 ## What is in it
@@ -51,9 +51,11 @@ resetting the box; the list and reasons are in the tracking report), so 115 clip
 Table frame: cm, origin at the square's top-left corner as seen from the camera, x to the right, y down.
 Palm = mean of MediaPipe hand landmarks 0, 5, 9, 13, 17, height-corrected.
 
-**Push-T results** (`pusht/`): DINOv2-small and V-JEPA 2 ViT-L embeddings of the 150 Push-T episodes used
-(fp16, `pusht/<encoder>/embeddings/pusht-<index>.npy`, index = position in Push-T's file), the trained
-predictors (three seeds for DINOv2), results, the ranking test and the Panda replay. Push-T itself is **not**
+**Push-T results** (`pusht/`): DINOv2-small embeddings of the 150 Push-T episodes used
+(fp16, `pusht/dinov2/embeddings/pusht-<index>.npy`, index = position in Push-T's file), the trained
+predictors (three seeds for DINOv2), results, the ranking test and the Panda replay. For V-JEPA 2 ViT-L, the
+encoder that lost, only the predictors, results and figures: its 9.3 GB of embeddings are left out (they are only
+needed to retrain it; `scripts/embed.py --dataset pusht --encoder vjepa2` recomputes them). Push-T itself is **not**
 included: the code downloads it from its original URL
 (`https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip`, from Chi et al., *Diffusion Policy*, 2023).
 
