@@ -3,6 +3,7 @@
 import numpy as np
 
 from pwm.datasets import toy
+from pwm.episodes import load_episodes, save_episodes
 
 
 def test_same_seed_gives_the_same_episodes_and_split():
@@ -26,3 +27,17 @@ def test_object_moves_only_while_the_pusher_touches_it():
             assert not moved.any(), ep.name
         moved_any |= moved.any()
     assert moved_any
+
+
+def test_episodes_can_be_loaded_without_their_frames(tmp_path):
+    # Most stages need only the tracks: a run folder of real clips holds gigabytes of frames.
+    episodes = toy.make_episodes(n_episodes=4, seed=0)
+    save_episodes(episodes, tmp_path)
+
+    tracks = load_episodes(tmp_path, frames=False)
+
+    for ep, loaded in zip(episodes, tracks):
+        assert loaded.name == ep.name and loaded.split == ep.split and loaded.kind == ep.kind
+        np.testing.assert_array_equal(loaded.object_pos, ep.object_pos)
+        np.testing.assert_array_equal(loaded.pusher_pos, ep.pusher_pos)
+        assert len(loaded.frames) == len(ep.frames) and loaded.frames.size == 0

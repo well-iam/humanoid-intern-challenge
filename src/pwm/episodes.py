@@ -62,8 +62,11 @@ def save_episodes(episodes: list[Episode], folder: Path) -> None:
         )
 
 
-def load_episodes(folder: Path) -> list[Episode]:
-    """Read every episode in `folder`, sorted by name. This order is the canonical one."""
+def load_episodes(folder: Path, frames: bool = True) -> list[Episode]:
+    """Read every episode in `folder`, sorted by name. This order is the canonical one.
+
+    With `frames` False the pixels are never read: each episode's frames are an empty (T, 0, 0, 3) stand-in, so
+    the frame count stays. For the stages that need only the tracks and the cached embeddings."""
     episodes = []
     for path in sorted(folder.glob("*.npz")):
         with np.load(path) as f:
@@ -71,7 +74,7 @@ def load_episodes(folder: Path) -> list[Episode]:
             episodes.append(
                 Episode(
                     name=path.stem,
-                    frames=f["frames"],
+                    frames=f["frames"] if frames else np.empty((len(f["timestamps"]), 0, 0, 3), np.uint8),
                     timestamps=f["timestamps"],
                     pusher_pos=f["pusher_pos"],
                     object_pos=f["object_pos"],

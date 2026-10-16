@@ -109,13 +109,15 @@ def embed(dataset: str, encoder: str, root: str | Path | None = None) -> None:
     out = folder / encoder / "embeddings"
     out.mkdir(parents=True, exist_ok=True)
     enc = None
-    for ep in load_episodes(folder / "episodes"):
+    for ep in load_episodes(folder / "episodes", frames=False):  # each one's frames are read only if needed
         path = out / f"{ep.name}.npy"
         if path.exists() and len(np.load(path, mmap_mode="r")) == len(ep.frames):
             continue
         enc = enc or get_encoder(encoder)  # load the model only if there is work to do
+        with np.load(folder / "episodes" / f"{ep.name}.npz") as f:
+            frames = f["frames"]
         partial = out / f"{ep.name}.partial.npy"
-        np.save(partial, enc.encode(ep.frames).astype(np.float16))
+        np.save(partial, enc.encode(frames).astype(np.float16))
         partial.replace(path)  # an interrupted run never leaves a half-written cache file
 
 
@@ -146,7 +148,7 @@ def train(
     lr, precision, ...).
     """
     folder = data_root(root) / dataset
-    episodes = load_episodes(folder / "episodes")
+    episodes = load_episodes(folder / "episodes", frames=False)
     embeddings = load_embeddings(dataset, encoder, episodes, root)
     predictor = train_predictor(
         episodes, embeddings, DATASETS[dataset].step, use_actions=not blind, device=device or _device(), seed=seed,
@@ -209,7 +211,7 @@ def probe_scaling(
     default to doubling from 6 up to all the other folds' clips. Writes probe-scaling.json and .png to the run
     folder."""
     folder = data_root(root) / dataset
-    train = [ep for ep in load_episodes(folder / "episodes") if ep.split == "train"]
+    train = [ep for ep in load_episodes(folder / "episodes", frames=False) if ep.split == "train"]
     embeddings = load_embeddings(dataset, encoder, train, root)
     rng = np.random.default_rng(seed)
     fold_of = rng.permutation(len(train)) % folds
@@ -241,7 +243,7 @@ def probe_scaling(
 def _scored(dataset: str, encoder: str, root, only_takes: list[str] | None):
     """The episodes to score and their embeddings: all, or every training episode and the held-out episodes of
     `only_takes`."""
-    episodes = load_episodes(data_root(root) / dataset / "episodes")
+    episodes = load_episodes(data_root(root) / dataset / "episodes", frames=False)
     if only_takes:
         episodes = [ep for ep in episodes if ep.split == "train" or ep.name.startswith(tuple(only_takes))]
     return episodes, load_embeddings(dataset, encoder, episodes, root)
@@ -374,7 +376,7 @@ def rank(
     folder = data_root(root) / dataset
     gate = Report.load(folder / encoder).validation_gate
     assert gate, f"the ranking test runs only if the validation gate passed ({encoder}: {gate})"
-    episodes = load_episodes(folder / "episodes")
+    episodes = load_episodes(folder / "episodes", frames=False)
     embeddings = load_embeddings(dataset, encoder, episodes, root)
     spec = DATASETS[dataset]
     train_ids = [i for i, ep in enumerate(episodes) if ep.split == "train"]

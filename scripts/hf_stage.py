@@ -36,7 +36,7 @@ for name, take in hub.public_videos(root).items():
     print(f"720p copy of {take.name}")
     hub.transcode(take, out / name)
 
-episodes = load_episodes(root / "clips" / "episodes")
+episodes = load_episodes(root / "clips" / "episodes", frames=False)
 hub.write_tracks(episodes, out / "clips" / "tracks.csv")
 hub.write_split(episodes, out / "clips" / "split.json")
 shutil.copy(Path(__file__).parents[1] / "docs" / "hf-dataset-card.md", out / "README.md")
