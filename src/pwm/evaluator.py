@@ -299,6 +299,114 @@ def evaluate(
     )
 
 
+TRUE = "true"  # near-miss test row: the tracked object displacement
+REAL = "real future frame"  # near-miss test row: the probe on the real frames, what a perfect predictor would get
+
+
+@dataclass
+class NearMiss:
+    """The near-miss test: how far the models move the object when the pusher passes it by.
+
+    Near-miss windows: held-out near-miss episodes, where the pusher moves more than the move
+    threshold within the horizon (the object stays still). Push windows: held-out push
+    episodes, where the object moves more than the threshold within the horizon (the moving
+    windows). The displacement of a row is how far the probe's object position at the horizon
+    is from the probe's object position on the real current frame, so a probe bias that stays
+    put cancels; the true row is the tracked displacement.
+    """
+
+    unit: str
+    step: float
+    move_threshold: float
+    horizons: list[int]
+    n_windows: dict[str, list[int]]  # kind -> windows per horizon
+    displacement: dict[str, dict[str, list[float]]]  # kind -> row -> mean displacement per horizon
+
+    def save(self, folder: Path, title: str) -> None:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "near-miss.json").write_text(json.dumps(asdict(self), indent=2))
+        (folder / "near-miss.md").write_text(self.to_markdown(title))
+
+    @classmethod
+    def load(cls, folder: Path) -> "NearMiss":
+        return cls(**json.loads((folder / "near-miss.json").read_text()))
+
+    def to_markdown(self, title: str) -> str:
+        def row(cells):
+            return "| " + " | ".join(cells) + " |"
+
+        lines = [
+            f"# Near-miss test: {title}",
+            "",
+            f"Mean object displacement in {self.unit} over held-out windows, by horizon (one step = {self.step:g} s): "
+            f"how far the probe's object position at the horizon is from the probe's object position on the real "
+            f"current frame. Near-miss windows: the pusher moves more than {self.move_threshold:g} {self.unit} within "
+            f"the horizon and the object stays still. Push windows: the object moves more than "
+            f"{self.move_threshold:g} {self.unit} within the horizon.",
+            "",
+            row([""] + [f"{h} step{'s' if h > 1 else ''}" for h in self.horizons]),
+            row(["---"] + ["---:"] * len(self.horizons)),
+        ]
+        for kind, rows in self.displacement.items():
+            lines.append(row([f"**{kind} windows**"] + [str(n) for n in self.n_windows[kind]]))
+            for name, values in rows.items():
+                lines.append(row([f"{name}"] + [f"{v:.2f}" for v in values]))
+        return "\n".join(lines) + "\n"
+
+
+def near_miss(
+    episodes: list[Episode],
+    embeddings: list[np.ndarray],
+    step: float,
+    move_threshold: float,
+    predictor=None,
+    blind=None,
+    horizons: list[int] = HORIZONS,
+) -> NearMiss:
+    """The near-miss test (see NearMiss) for the given rollout functions, on held-out episodes."""
+    train = [i for i, ep in enumerate(episodes) if ep.split == "train"]
+    probe = Probe.fit([embeddings[i] for i in train], [episodes[i].object_pos for i in train])
+    models = {name: rollout for name, rollout in ((PREDICTOR, predictor), (BLIND, blind)) if rollout is not None}
+
+    n_windows, displacement = {}, {}
+    for kind in ("push", "near-miss"):
+        ids = [i for i, ep in enumerate(episodes) if ep.split == "held-out" and ep.kind == kind]
+        held_out, held_embeddings = [episodes[i] for i in ids], [embeddings[i] for i in ids]
+        windows = make_windows(held_out, step, future=max(horizons))
+        c = windows.context
+        track = windows.object_pos if kind == "push" else windows.pusher_pos  # what must move in the window
+        moved = _dist(track[:, c:], track[:, c - 1 : c])
+        picked = [moved[:, :h].max(axis=1) > move_threshold for h in horizons]
+
+        probe_pos = [probe.predict(e) for e in held_embeddings]
+        now = windows.gather(probe_pos, cols=slice(c - 1, c))  # (N, 1, 2)
+        moves = {
+            TRUE: _dist(windows.object_pos[:, c:], windows.object_pos[:, c - 1 : c]),
+            REAL: _dist(windows.gather(probe_pos, cols=slice(c, None)), now),
+        }
+        actions = windows.actions[:, c - 1 :]
+        for name, rollout in models.items():
+            out = []
+            for b in range(0, len(windows), BATCH):
+                rows = slice(b, b + BATCH)
+                predicted = rollout(
+                    windows.gather(held_embeddings, rows, slice(None, c)), windows.pusher_pos[rows, :c], actions[rows]
+                )
+                n, steps = predicted.shape[:2]
+                predicted_pos = probe.predict(predicted.reshape(n * steps, *predicted.shape[2:])).reshape(n, steps, 2)
+                out.append(_dist(predicted_pos, now[rows]))
+            moves[name] = np.concatenate(out) if out else np.zeros((0, max(horizons)))
+
+        n_windows[kind] = [int(m.sum()) for m in picked]
+        displacement[kind] = {
+            name: [_mean(d[m, h - 1]) for h, m in zip(horizons, picked)] for name, d in moves.items()
+        }
+    return NearMiss(
+        unit=episodes[0].unit, step=step, move_threshold=move_threshold, horizons=list(horizons),
+        n_windows=n_windows, displacement=displacement,
+    )
+
+
 def _dist(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.linalg.norm(a - b, axis=-1)
 

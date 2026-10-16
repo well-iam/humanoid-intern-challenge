@@ -16,6 +16,7 @@ from pwm.evaluator import (
     STATIC,
     Report,
     evaluate,
+    near_miss,
     winning_encoder,
 )
 from pwm.predictor import train
@@ -58,11 +59,17 @@ def test_predictor_memorises_one_episode(toy_episodes, device, precision):
 
 
 @pytest.fixture(scope="module")
-def toy_report(toy_episodes):
+def toy_models(toy_episodes):
     """Predictor and action-blind predictor trained alike on the toy training episodes."""
     embeddings = embed(toy_episodes)
     predictor = train(toy_episodes, embeddings, toy.STEP, steps=1500, device=DEVICE, **TOY)
     blind = train(toy_episodes, embeddings, toy.STEP, use_actions=False, steps=1500, device=DEVICE, **TOY)
+    return embeddings, predictor, blind
+
+
+@pytest.fixture(scope="module")
+def toy_report(toy_episodes, toy_models):
+    embeddings, predictor, blind = toy_models
     return evaluate(
         toy_episodes, embeddings, toy.STEP, toy.MOVE_THRESHOLD, predictor=predictor.rollout, blind=blind.rollout
     )
@@ -82,6 +89,21 @@ def test_wrong_pusher_actions_raise_the_error(toy_report):
     error = {row: at_horizon_4_on_moving_windows(toy_report, row) for row in (PREDICTOR, REVERSED, SHUFFLED)}
     assert error[REVERSED] > error[PREDICTOR], error
     assert error[SHUFFLED] > error[PREDICTOR], error
+
+
+def test_the_predictor_keeps_the_object_still_when_the_pusher_misses_it(toy_episodes, toy_models):
+    embeddings, predictor, blind = toy_models
+    test = near_miss(toy_episodes, embeddings, toy.STEP, toy.MOVE_THRESHOLD, predictor=predictor.rollout,
+                     blind=blind.rollout)
+    h = test.horizons.index(4)
+    missed, pushed = test.displacement["near-miss"], test.displacement["push"]
+    # Near-miss windows: the pusher moves past the object, which stays where it is.
+    assert test.n_windows["near-miss"][h] > 0 and missed["true"][h] == 0
+    # Push windows: the object moves; the predictor must see it move.
+    assert pushed["true"][h] > 2
+    # The predictor moves the object a little on near-misses, and much more on pushes.
+    assert missed[PREDICTOR][h] < 1.0, missed
+    assert missed[PREDICTOR][h] < pushed[PREDICTOR][h] / 3, (missed, pushed)
 
 
 NAMES = {"predictor": PREDICTOR, "blind": BLIND, "reversed": REVERSED, "shuffled": SHUFFLED}

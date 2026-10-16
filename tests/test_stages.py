@@ -38,6 +38,23 @@ def test_stages_report_the_trained_predictors_and_the_gates(tmp_path):
     assert rows <= set(results["errors"])
     assert results["gate_1"] is True  # the toy probe is near perfect
     assert results["validation_gate"] in (True, False)
+    assert (tmp_path / "toy" / "toy" / "error-vs-horizon.png").stat().st_size > 0
+
+
+def test_the_near_miss_test_writes_its_table_and_plot_to_the_run_folder(tmp_path):
+    stages.make_episodes("toy", root=tmp_path)
+    stages.embed("toy", "toy", root=tmp_path)
+    stages.train("toy", "toy", root=tmp_path, size="tiny", steps=3)
+    stages.train("toy", "toy", root=tmp_path, blind=True, size="tiny", steps=3)
+
+    test = stages.near_miss("toy", "toy", root=tmp_path)
+
+    folder = tmp_path / "toy" / "toy"
+    saved = json.loads((folder / "near-miss.json").read_text())
+    assert saved["displacement"]["near-miss"]["true"] == test.displacement["near-miss"]["true"]
+    assert {"predictor", "action-blind predictor"} <= set(saved["displacement"]["push"])
+    assert "near-miss windows" in (folder / "near-miss.md").read_text()
+    assert (folder / "near-miss.png").stat().st_size > 0
 
 
 def test_a_run_trained_with_another_seed_lives_in_its_own_folder_and_leaves_the_default_run_alone(tmp_path):

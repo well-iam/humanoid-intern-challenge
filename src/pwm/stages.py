@@ -12,6 +12,9 @@ writes its outputs there, so any stage can be rerun on its own:
     <root>/<dataset>/<encoder>/predictor-blind.pt  the action-blind predictor        (train --blind)
     <root>/<dataset>/<encoder>/results.json    the report, machine-readable           (evaluate)
     <root>/<dataset>/<encoder>/report.md       the report, for people                 (evaluate)
+    <root>/<dataset>/<encoder>/error-vs-horizon.png  this run's errors by horizon      (evaluate)
+    <root>/<dataset>/<encoder>/near-miss.json, near-miss.md, near-miss.png
+                                               the near-miss test                     (near_miss)
     <root>/<dataset>/<encoder>/retrievals.png  nearest real frames of a few rollouts  (retrievals)
     <root>/<dataset>/<encoder>/seed-<n>/       predictor.pt, predictor-blind.pt, results.json and
                                                report.md of a run trained with seed n (train and
@@ -39,13 +42,15 @@ from pwm.evaluator import (
     GATE_HORIZON,
     HORIZONS,
     PREDICTOR,
+    NearMiss,
     Report,
     nearest_frames,
     seeds_to_markdown,
     winning_encoder,
 )
 from pwm.evaluator import evaluate as evaluate_episodes
-from pwm.plots import ENCODER_NAMES, plot_errors, plot_ranking, save_retrievals
+from pwm.evaluator import near_miss as near_miss_test
+from pwm.plots import ENCODER_NAMES, plot_errors, plot_near_miss, plot_ranking, save_retrievals
 from pwm.predictor import Predictor
 from pwm.predictor import train as train_predictor
 from pwm.probe import Probe
@@ -147,7 +152,24 @@ def evaluate(dataset: str, encoder: str, root: str | Path | None = None, seed: i
             trained[role] = Predictor.load(path, _device()).rollout
     report = evaluate_episodes(episodes, embeddings, spec.step, spec.move_threshold, **trained)
     report.save(run, title=f"{dataset}, {encoder} encoder" + (f", seed {seed}" if seed else ""))
+    plot_errors({encoder: report}, run / "error-vs-horizon.png")
     return report
+
+
+def near_miss(dataset: str, encoder: str, root: str | Path | None = None) -> NearMiss:
+    """The near-miss test with the trained predictors: how far each moves the object on held-out
+    windows where the pusher passes it by, next to windows where it really moves."""
+    folder = data_root(root) / dataset
+    episodes = load_episodes(folder / "episodes")
+    embeddings = load_embeddings(dataset, encoder, episodes, root)
+    spec = DATASETS[dataset]
+    run = run_folder(dataset, encoder, root)
+    trained = {role: Predictor.load(run / _predictor_file(blind), _device()).rollout
+               for role, blind in (("predictor", False), ("blind", True)) if (run / _predictor_file(blind)).exists()}
+    test = near_miss_test(episodes, embeddings, spec.step, spec.move_threshold, **trained)
+    test.save(run, f"{dataset}, {encoder} encoder")
+    plot_near_miss(test, run / "near-miss.png", f"{ENCODER_NAMES.get(encoder, encoder)}, {dataset}")
+    return test
 
 
 def compare(dataset: str, root: str | Path | None = None) -> str:

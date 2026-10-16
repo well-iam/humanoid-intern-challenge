@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 from pwm.evaluator import (  # noqa: E402
+    REAL,
+    TRUE,
     BLIND,
     GATE_HORIZON,
     GATE_MARGIN,
@@ -17,6 +19,7 @@ from pwm.evaluator import (  # noqa: E402
     REVERSED,
     SHUFFLED,
     STATIC,
+    NearMiss,
     Report,
 )
 
@@ -82,7 +85,7 @@ def plot_errors(reports: dict[str, Report], path: Path) -> None:
     plt.close(fig)
 
 
-def _style(ax, report: Report) -> None:
+def _style(ax, report: Report | NearMiss) -> None:
     ax.set_facecolor(SURFACE)
     ax.set_xscale("log", base=2)
     ax.set_xticks(report.horizons, [str(h) for h in report.horizons])
@@ -123,6 +126,38 @@ def _pass_mark(ax, report: Report) -> None:
     ax.annotate(
         "pass mark", xy=(GATE_HORIZON * 1.22, mark), va="center", fontsize=8, color=INK_2, annotation_clip=False
     )
+
+
+def plot_near_miss(test: NearMiss, path: Path, title: str) -> None:
+    """The near-miss test: mean object displacement by horizon on push windows (left) and on
+    near-miss windows (right), for the tracked object, the real future frames and each model."""
+    plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 9})
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.2), layout="constrained", facecolor=SURFACE, sharey=True)
+    fig.suptitle(f"Near-miss test, {title}: does the object move only when the pusher touches it?", x=0.01,
+                 ha="left", fontsize=11, fontweight="bold", color=INK)
+    labels = {TRUE: "tracked object", REAL: "probe on the real future frame", PREDICTOR: LABELS[PREDICTOR],
+              BLIND: LABELS[BLIND]}
+    titles = {"push": "Push windows: the object moves",
+              "near-miss": "Near-miss windows: the pusher moves, the object does not"}
+    for ax, kind in zip(axes, ("push", "near-miss")):
+        _style(ax, test)
+        ax.set_title(titles[kind], color=INK_2, fontsize=9, loc="left")
+        for row, values in test.displacement[kind].items():
+            if row == TRUE:
+                ax.plot(test.horizons, values, color=INK, linewidth=1.5, linestyle="--", label=labels[row], zorder=4)
+            elif row == REAL:
+                ax.plot(test.horizons, values, color=FLOOR_COLOUR, linewidth=2, label=labels[row], zorder=1)
+            else:
+                ax.plot(test.horizons, values, color=COLOURS[row], linewidth=2, marker="o", markersize=6,
+                        markeredgecolor=SURFACE, markeredgewidth=1.5, label=labels[row], zorder=3)
+        counts = " / ".join(str(n) for n in test.n_windows[kind])
+        ax.set_xlabel(f"horizon (steps of {test.step:g} s)\nheld-out windows per horizon: {counts}", color=INK_2)
+    axes[0].set_ylabel(f"object displacement ({test.unit})", color=INK_2)
+    axes[0].set_ylim(bottom=0)
+    handles, names = axes[0].get_legend_handles_labels()
+    fig.legend(handles, names, loc="outside lower center", ncol=4, frameon=False, fontsize=9, labelcolor=INK_2)
+    fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
 
 
 def plot_ranking(report, path: Path, encoder: str) -> None:
