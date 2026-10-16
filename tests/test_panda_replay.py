@@ -86,3 +86,21 @@ def test_a_slowed_down_push_ends_in_the_same_place():
     assert slow.poses.shape == normal.poses.shape == (len(timestamps), 3)
     np.testing.assert_allclose(slow.poses[:, :2], normal.poses[:, :2], atol=0.5)
     np.testing.assert_allclose(slow.pusher, path, atol=1.0)
+
+
+def test_a_shifted_palm_path_pushes_the_box_as_far_as_the_hand_did():
+    # A made-up clip (as in test_palm_replay): the palm comes up the table at 8 cm/s, its fingertips 12 cm ahead,
+    # and pushes the upright white box 13.9 cm. The palm path moved by the clip's contact shift must push the
+    # simulated box to where the real one ended.
+    from test_palm_replay import BOX, made_up_push
+
+    from pwm.replay import palm
+
+    ep = made_up_push()
+    push = palm.clip_push(ep, palm.own_shift(ep, size=BOX), size=BOX)
+
+    result = get_replay("panda").replay(push)
+
+    assert np.linalg.norm(ep.object_pos[-1] - ep.object_pos[0]) > 13.0  # the real box moved
+    error = np.linalg.norm(result.final[:2] - ep.object_pos[-1])
+    assert error < 0.5, f"simulated box ends {error:.2f} cm from the real one, at {result.final[:2]}"
