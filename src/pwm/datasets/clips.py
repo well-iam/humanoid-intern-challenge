@@ -4,6 +4,11 @@
   6 s (or until the next clap).
 - Frames: picked by timestamp at 8 fps, each the video frame nearest its time, so the phone's uneven frame
   rate does not change the step.
+- Marker: the printed ArUco marker is found in every frame used. Each clip's homography (image px -> table
+  cm) comes from the marker's corners averaged over the hand-free second after its clap; the other frames
+  only check that the camera stayed still (drift) and that it did not move since the previous clip (step).
+- Straightening: every clip frame is warped to the 50 x 50 cm table square, SIZE px a side, in the
+  camera's orientation. Table cm: origin at the view's top-left corner, x to the right, y down.
 """
 
 from collections import defaultdict
@@ -36,7 +41,7 @@ ENVELOPE = 0.01  # seconds per loudness sample
 
 @dataclass
 class Clip:
-    name: str  # "<take>-<n>", n counting from 1
+    name: str  # "<take>-<nn>", nn counting from 01, so names sort in take order
     clap: float  # seconds into the take
     timestamps: np.ndarray  # (T,) seconds since the clap, k / FPS
     source_times: np.ndarray  # (T,) seconds into the take of the video frame used for each
@@ -74,12 +79,16 @@ class Take:
     name: str
     claps: np.ndarray  # (n,) seconds into the take
     clips: list[Clip]
+    clap_db: np.ndarray  # (n,) each clap's loudness above the take's noise floor (median), dB
+    other: tuple[float, float]  # the loudest sound more than CLAP_GAP from every clap: (seconds, dB above floor)
+    frame_times: np.ndarray  # (N,) every video frame's time, seconds into the take
 
 
 def cut_take(video: str | Path, size: int = SIZE) -> Take:
     """Cut a take into clips and straighten their frames to `size` x `size` px views of the table square."""
     video = Path(video)
-    claps = _claps(*_loudness(video))
+    times, level = _loudness(video)
+    claps = _claps(times, level)
     frame_times = _frame_times(video)
 
     # Each clip's frames: the video frame nearest each k / FPS after the clap, before the next clap.
@@ -115,7 +124,7 @@ def cut_take(video: str | Path, size: int = SIZE) -> Take:
     for k, (clap, pick, still) in enumerate(zip(claps, picks, hand_free)):
         clips.append(
             Clip(
-                name=f"{video.stem}-{k + 1}",
+                name=f"{video.stem}-{k + 1:02d}",
                 clap=float(clap),
                 timestamps=np.arange(len(pick)) / FPS,
                 source_times=frame_times[pick],
@@ -128,7 +137,15 @@ def cut_take(video: str | Path, size: int = SIZE) -> Take:
                 image_to_table=image_to_table[k],
             )
         )
-    return Take(name=video.stem, claps=claps, clips=clips)
+
+    floor = np.median(level)
+    clap_db = level[np.searchsorted(times, claps)] - floor
+    away = np.all(np.abs(times[:, None] - claps[None, :]) > CLAP_GAP, axis=1)
+    loudest = np.flatnonzero(away)[np.argmax(level[away])] if away.any() else None
+    other = (float(times[loudest]), float(level[loudest] - floor)) if loudest is not None else (np.nan, np.nan)
+    return Take(
+        name=video.stem, claps=claps, clips=clips, clap_db=clap_db, other=other, frame_times=frame_times
+    )
 
 
 def _image_to_table(corners: np.ndarray) -> np.ndarray:
