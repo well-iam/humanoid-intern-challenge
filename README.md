@@ -8,6 +8,18 @@ I trained a small world model that predicts where a pushed object will go, check
 
 Left: one of my held-out clips (palm in green). Middle: what the predictor expected 1 s earlier, from the frames it had then and my real palm moves. A prediction is a feature vector, not an image, so I show the training frame whose features are closest to it. Right: the Panda replaying my palm path in MuJoCo. The clip is not the best one: of the 3 held-out pushes where I know where the palm was at contact, it is the one with the median replay error (4.5 cm; the box also ends 41° off).
 
+## In short
+
+What worked:
+- **Push-T** (a public dataset of a round pusher moving a T-shaped block): 2 s ahead, the predictor's error is 25% below the same model trained without the pusher's moves, and 59% below "nothing moves". It passed my fixed pass mark on 1 of 3 training seeds.
+- **My own 115 clips:** both pass marks pass. The box's position is read within 1.24 cm, and 1 s ahead the predictor is 32% below the model without the pusher's moves. My first 30 clips failed both; more clips fixed it.
+- **The robot:** my palm paths drive a simulated Panda arm. The box ends a median 3.8 to 4.7 cm from where my real box ended (it moved about 15 cm). On all 35 near-misses, the arm passes the box without moving it.
+
+What didn't:
+- **Near-misses:** when my hand passes the box, the predictor still moves it 1.44 cm, twice the measurement noise.
+- **Choosing a push:** the model ranks 32 candidate pushes roughly like the simulator does, but its single top pick is worse than a random one.
+- **The box's angle** in the robot replay: 25° off.
+
 ## The idea
 
 - A frozen image encoder (DINOv2-small) turns each frame into a 16 × 16 grid of features.
@@ -49,7 +61,7 @@ The predictor is 59% below the static baseline. Reversed pusher moves are as bad
 | 1 | 17.95 | 21.31 | 17.05 | fail by 0.90 |
 | 2 | 35.19 | 43.46 | 34.77 | fail: training got stuck |
 
-The predictor itself is stable on the two healthy seeds (18.14 and 17.95). The action-blind predictor is not, and the gate is measured against it. The seed-0 pass came partly from a weak action-blind draw. Per-seed plots: [assets/pusht-seeds.png](assets/pusht-seeds.png).
+The predictor is stable on the two healthy seeds (18.14 and 17.95). The action-blind predictor, which the gate is measured against, is not. Per-seed plots: [assets/pusht-seeds.png](assets/pusht-seeds.png).
 
 ## Ranking test: can the model score paths?
 
@@ -57,10 +69,10 @@ A world model is useful if it can tell good actions from bad ones. For each of 5
 
 ![Ranking test](assets/ranking.png)
 
-- The two rankings agree: mean Spearman rank correlation per start **+0.26 ± 0.06**, positive in 36 of 50 starts. With shuffled pusher moves it is **+0.00 ± 0.03**.
+- The two rankings agree, weakly. Their rank correlation per start (1 means the same order, 0 unrelated) averages **+0.26 ± 0.06**, and is positive in 36 of 50 starts. With shuffled pusher moves it is **+0.00 ± 0.03**.
 - **But the single top pick is worse than a random pick:** it ends 79.8 units from the goal, against 68.3 for a random pick (73.8 on average over all candidates).
 
-Why: the top pick is where the model is most wrong in the hopeful direction. For top picks it predicted 20.7 units from the goal; the simulator said 79.8. Its position error on top picks is 69 units, against 42 on average. Taking the best-scored path selects the model's own mistakes. That is the usual way a planner exploits a learned model. After the test (not part of the fixed setup), I checked that the top 5, 8 and 16 picks do beat random (71.7, 69.1, 67.5 vs 73.8). The ranking has signal in bulk, but its best guess is not reliable.
+Why: the top pick is where the model is most wrong in the hopeful direction. For top picks it predicted 20.7 units from the goal; the simulator said 79.8. Its position error on top picks is 69 units, against 42 on average. Taking the best-scored path selects the model's own mistakes. That is the usual way a planner exploits a learned model. The ranking has signal in bulk, but its best guess is not reliable.
 
 ## My data
 
@@ -94,7 +106,6 @@ Error at 4 steps (1 s) ahead on held-out moving windows, cm:
 | validation gate (pass mark) | fail (3.57) | pass (3.69) | pass (3.33) |
 
 - **Both gates now pass.** On all 18 held-out clips the predictor is 32% below the action-blind predictor (20% needed) and 58% below the static baseline. It beats the action-blind predictor in all 10 held-out push clips. Resampling those 10 clips puts the ratio at 0.68 (95% interval 0.62 to 0.74).
-- On the first run it was only 15% below the action-blind predictor (ratio 0.85, 95% interval 0.78 to 0.92, over 6 clips).
 - Wrong pusher moves hurt more than before. Reversed moves now put the error at the static baseline's level (6.43 vs 6.67 cm). So the predictor leans on the actions more.
 - At 8 steps (2 s) ahead, on all 18: predictor 4.02 cm, action-blind 5.96, static 11.84.
 - The static baseline got worse with more data on the same 8 clips (5.83 to 6.34 cm). The static baseline is the probe on the current frame. My guess: the first run's weaker probe pulled every position toward the middle, which hid part of the motion.
@@ -109,11 +120,11 @@ This is 5-fold cross-validation over the 97 training clips (held-out clips never
 
 ![Near-miss test](assets/near-miss.png)
 
-At 1 s, on the 8 held-out near-miss clips, the predictor moves the box 1.44 cm. The probe's own jitter on the real frames is 0.67 cm. That is still a fail. But it is better than the first run, where it moved the box 2.37 cm on 2 near-miss clips. And it now moves the box less than the action-blind predictor (1.44 vs 2.17 cm at 1 s, 2.86 vs 4.48 at 2 s), which the first run never did. So the actions now tell it something about "the hand passed by". On the first run's 2 near-miss clips alone, it improved at 1 s (2.37 to 1.61 cm) but not at 2 s (4.17 to 4.23 cm).
+At 1 s, on the 8 held-out near-miss clips, the predictor moves the box 1.44 cm, while the probe's own jitter on the real frames is 0.67 cm. That is still a fail. But it is better than the first run (2.37 cm), and it now moves the box less than the action-blind predictor (2.17 cm), which the first run never did. So the hand's moves now tell it something about "the hand passed by".
 
 ### My palm paths drive the Panda
 
-The palm centre is about 12 cm behind the part of the hand that touches the box. So for each push I measure, at the moment of contact, the vector from the palm to the nearest edge of the box, and move the whole path by it. The Panda's closed gripper follows the moved path 1.5 cm above the table, with mink inverse kinematics in MuJoCo. The simulated box starts where the real one started.
+The palm centre is about 12 cm behind the part of the hand that touches the box. So for each push I measure, at the moment of contact, the vector from the palm to the nearest edge of the box, and move the whole path by it. The Panda's closed gripper follows the moved path 1.5 cm above the table in MuJoCo. The mink library works out the joint angles that put the gripper on each point (inverse kinematics). The simulated box starts where the real one started.
 
 ![Panda replaying one of my pushes](assets/panda-push.gif)
 
@@ -156,12 +167,11 @@ Dropped, and why:
 - **The Push-T gate on more seeds:** passed on 1 of 3. Seed 1 missed by 0.90 units because its action-blind predictor was stronger. Seed 2 got stuck in training (both models close to the static baseline). I did not investigate seed 2 further.
 - **V-JEPA 2:** failed the gate (16.8% below its action-blind predictor, 20% needed). Its probe error is twice DINOv2's (8.27 vs 3.96), so part of its error is in the read-out, not the prediction.
 - **The ranking test's top pick:** worse than random (79.8 vs 73.8 units from the goal on average).
-- **My first 30 clips were not enough** (fixed by more data). Gate 1 failed (probe 3.49 cm vs 2 cm) and so did the validation gate (15% below the action-blind predictor, 20% needed). Per the plan, a Gate 1 fail means "fix the input first". Recording 6 more takes did that: 1.24 cm and 32% (see [My data](#my-data)).
 - **Contact on my clips:** the near-miss test still fails. The predictor moves the box 1.44 cm at 1 s where it stayed still, twice the probe's jitter (0.67 cm). Better than the first run (2.37 cm), not solved.
 - **Late hands:** in 32 of 80 pushes MediaPipe found my hand less than 0.25 s before the box moved. Without the palm at contact, the replay has to guess the contact shift (median 4.7 cm error, worst 19.1). All 4 new held-out pushes are in this group, so only 3 held-out pushes have their own shift.
 - **The box's angle in replay:** median error 25° on the own-shift pushes. The Panda pushes with two closed fingers, 3.8 × 2 cm. My hand pushes with a wide edge, so the real box turns differently.
 - **Box size on the new takes:** the worst top-face error grew from 0.33 cm on the first 3 takes to 0.77 cm on all 9. I did not look into why.
-- **Open-loop Push-T replay on the Panda:** median 20 units (about 2 cm at the Panda's scale), worst 281 units. Push-T's 2D physics has no floor friction; MuJoCo does. Once the T drifts, the human's later corrections push it the wrong way.
+- **Push-T paths replayed on the Panda** (followed blindly, with no correction as they go): median 20 units (about 2 cm at the Panda's scale), worst 281 units. Push-T's 2D physics has no floor friction; MuJoCo does. Once the T drifts, the human's later corrections push it the wrong way.
 
 ## How to run
 
@@ -179,7 +189,11 @@ With [uv](https://docs.astral.sh/uv/), Python 3.12 and an NVIDIA GPU (I used a Q
 uv sync
 export PWM_DATA=/path/to/pwm-data   # every stage reads and writes here
 uv run pytest                       # fast tests, on a toy world
+uv run pytest -m slow               # data, simulator and long-training tests
 ```
+
+<details>
+<summary>Every step, from raw data to the README's figures</summary>
 
 Push-T, end to end (each model trains in about 15 min):
 
@@ -215,6 +229,8 @@ uv run python scripts/panda_replay.py --dataset clips --episode VID_20261016_163
 uv run python scripts/gif_strip.py --episode VID_20261016_141304-11
 uv run python scripts/readme_assets.py   # copies the README's figures into assets/
 ```
+
+</details>
 
 The 1080p takes are not public. To run the clip chain without them, download the Hugging Face dataset into `$PWM_DATA` (9.6 GB; add `--exclude "clips/videos/*"` to skip the 0.6 GB of 720p takes): it holds the tracked episodes, so you can skip `track.py` and start from `embed.py`.
 
