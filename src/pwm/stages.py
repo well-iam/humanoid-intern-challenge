@@ -80,26 +80,27 @@ def raw_folder(dataset: str, root: str | Path | None = None) -> Path:
 
 def write_episodes(dataset: str, episodes: list[Episode], root: str | Path | None = None) -> None:
     """Write the dataset's episodes; the episodes folder then holds exactly these (no stale ones from a
-    source that is gone). An episode whose frames changed (e.g. a take tracked again) loses its cached
-    embeddings, so `embed` encodes it again."""
+    source that is gone). An episode written over one with other frames (e.g. a take tracked again) loses its
+    cached embeddings, so `embed` encodes it again."""
     folder = data_root(root) / dataset / "episodes"
     names = {ep.name for ep in episodes}
     for path in folder.glob("*.npz"):
         if path.stem not in names:
             path.unlink()
     for ep in episodes:
-        if not _same_frames(folder / f"{ep.name}.npz", ep.frames):
+        if _other_frames(folder / f"{ep.name}.npz", ep.frames):
             for encoder in ENCODERS:
                 (data_root(root) / dataset / encoder / "embeddings" / f"{ep.name}.npy").unlink(missing_ok=True)
     save_episodes(episodes, folder)
 
 
-def _same_frames(path: Path, frames: np.ndarray) -> bool:
-    """Whether the episode file at `path` exists and holds exactly these frames."""
+def _other_frames(path: Path, frames: np.ndarray) -> bool:
+    """Whether the episode file at `path` holds other frames than these. No file: no (embeddings downloaded
+    without their episodes, e.g. Push-T's in the notebook, stay; `embed` still checks the frame count)."""
     if not path.exists():
         return False
     with np.load(path) as f:
-        return bool(np.array_equal(f["frames"], frames))
+        return not np.array_equal(f["frames"], frames)
 
 
 def embed(dataset: str, encoder: str, root: str | Path | None = None) -> None:

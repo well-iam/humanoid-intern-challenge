@@ -231,6 +231,15 @@ def test_rebuilding_an_episode_with_new_frames_makes_embedding_encode_it_again(t
     np.testing.assert_allclose(embedding, ToyEncoder().encode(changed.frames), atol=1e-3)
 
 
+def test_building_the_episodes_keeps_embeddings_cached_without_them(toy_run, tmp_path):
+    # The notebook's download: Push-T's embeddings come from the dataset, its episodes are rebuilt from the source.
+    shutil.rmtree(tmp_path / "toy" / "episodes")
+
+    stages.make_episodes("toy", root=tmp_path)
+
+    assert len(list((tmp_path / "toy" / "toy" / "embeddings").glob("*.npy"))) == 60
+
+
 def test_the_figures_are_redrawn_from_the_saved_results_alone(evaluated_run, tmp_path):
     # The notebook's fast path: no episodes, no embeddings, no predictors, only the saved results.
     stages.near_miss("toy", "toy", root=tmp_path)
