@@ -61,7 +61,7 @@ def overlay(clip: tracking.TrackedClip, path) -> None:
     path.extend(frames)
 
 
-tracked, failed = [], []
+tracked, failed, came_back = [], [], set()
 for video in videos:
     print(f"Tracking {video.name} ...", flush=True)
     try:
@@ -70,7 +70,8 @@ for video in videos:
         traceback.print_exc()
         failed.append((video.name, str(error)))
         continue
-    take = [tracking.cut(t, tracking.CUT_AT[t.name]) if t.name in tracking.CUT_AT else t for t in take]
+    came_back |= {t.name for t in take if tracking.first_visit(t).kept < t.kept}
+    take = [tracking.first_visit(t) for t in take]  # each clip ends when the hand leaves the view
     tracked += take
     frames = []
     for clip in take:
@@ -151,7 +152,7 @@ for t in tracked:
     k = t.kept
     x, y = t.object_pos[0]
     flags = ([f"excluded: {tracking.EXCLUDED[t.name]}"] if t.name in tracking.EXCLUDED else []) + (
-        [f"cut at {tracking.CUT_AT[t.name]:g} s: the hand comes back to reset the object"] if t.name in tracking.CUT_AT else []
+        ["ends where the hand left; it came back later"] if t.name in came_back else []
     ) + t.flags
     lines.append(
         f"| {t.name} | {t.kind} | {split.get(t.name, 'excluded')} | {t.moved:.1f} | {t.entered:.2f} | {t.left:.2f} | {k} "

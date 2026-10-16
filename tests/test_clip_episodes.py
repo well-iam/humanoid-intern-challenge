@@ -87,13 +87,23 @@ def test_an_excluded_clip_is_left_out_before_the_draw():
     assert sum(ep.split == "held-out" for ep in kept) == 10
 
 
-def test_a_clip_cut_before_the_hand_comes_back_to_reset_the_object_ends_there_and_is_labelled_on_what_is_left():
-    # The object moves from 0.5 s: in the real clip that is the hand coming back to reset it after a near-miss.
-    clips = [made_up_clip("reset", 5.0), made_up_clip("push", 5.0)]
-    episodes = {ep.name: ep for ep in tracking.to_episodes(clips, cut_at={"reset": 0.5})}
+def test_a_clip_ends_when_the_hand_leaves_so_a_return_to_reset_the_object_is_not_a_push():
+    # 3 s at 8 fps. The object moves from 0.5 to 1 s (made_up_clip); the hand is seen at `seen` frames.
+    def clip(name, seen):
+        c = made_up_clip(name, 5.0, n=24, entered=0.0)
+        c.palm_seen = np.zeros(24, bool)
+        c.palm_seen[seen] = True
+        return c
+
+    # Near-miss, then the hand is gone for 1 s, then it comes back and moves the object (a reset).
+    reset = clip("reset", np.r_[0:3, 11:24])
+    # The hand is lost for half a second mid-push: the same visit.
+    dropout = clip("dropout", np.r_[0:6, 10:24])
+    episodes = {ep.name: ep for ep in tracking.to_episodes([reset, dropout])}
+
     assert episodes["reset"].kind == "near-miss"
-    assert episodes["reset"].timestamps[-1] < 0.5
-    assert episodes["push"].kind == "push" and len(episodes["push"].timestamps) == 12
+    assert episodes["reset"].timestamps[-1] == 0.25  # the last frame of the first visit
+    assert episodes["dropout"].kind == "push" and len(episodes["dropout"].timestamps) == 24
 
 
 def test_a_small_set_holds_out_at_most_half_of_each_kind():

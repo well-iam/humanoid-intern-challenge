@@ -65,10 +65,19 @@ NEW_HELD_OUT = {"push": 4, "near-miss": 6}
 SEED = 0
 # Clips left out of the episodes: the clap rule cut them, but they are not a push or a near-miss (checked by eye
 # on the frames). Clip name -> why.
-EXCLUDED: dict[str, str] = {}
-# Clips cut short (seconds after the clap): a near-miss after which, still inside the 6 s cap, the hand came
-# back to reset the object. The episode ends before the hand comes back, so the reset does not make it a push.
-CUT_AT: dict[str, float] = {}
+EXCLUDED: dict[str, str] = {
+    "VID_20261016_164109-06": "a push, then the hand comes back within half a second and lifts and turns the "
+                              "object to reset it",
+    "VID_20261016_164526-04": "a near-miss, then the hand lifts and turns the object to reset it without leaving "
+                              "the view (labelled push)",
+    "VID_20261016_165020-06": "the clap (33.06 s) came during the previous near-miss: the hand is in view in the "
+                              "hand-free second, leaves, and comes back only to reset the object",
+    "VID_20261016_165020-08": "between claps 3.1 s apart (43.55 and 46.62 s): only the hand resetting the object "
+                              "(labelled push)",
+}
+# The hand unseen this long, once found, has left the view: the episode ends there. A later return (in the later
+# takes, the hand coming back to reset the object inside the 6 s cap) is not part of the push or the near-miss.
+LEFT_VIEW = 0.75  # seconds
 STEP = 0.25  # seconds: every 2nd frame at 8 fps, two interleaved sequences
 MOVE_THRESHOLD = 1.0  # cm
 
@@ -168,13 +177,11 @@ def track_take(video: str | Path, models: Path, setup: Setup = setups.CARPET) ->
     return tracked
 
 
-def to_episodes(
-    tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED, cut_at: dict[str, float] = CUT_AT
-) -> list[Episode]:
-    """Episodes from tracked clips: each trimmed to the hand leaving (or to its `cut_at` time), labelled push or
+def to_episodes(tracked: list[TrackedClip], excluded: dict[str, str] = EXCLUDED) -> list[Episode]:
+    """Episodes from tracked clips: each trimmed to the hand leaving (see first_visit), labelled push or
     near-miss, and split. Clips with a problem (see TrackedClip.problem) and the `excluded` clips are left out,
     before the split."""
-    tracked = [cut(t, cut_at[t.name]) if t.name in cut_at else t for t in tracked]
+    tracked = [first_visit(t) for t in tracked]
     usable = sorted((t for t in tracked if t.problem is None and t.name not in excluded), key=lambda t: t.name)
     held_out = _held_out([t.name for t in usable], [t.kind for t in usable])
     episodes = []
@@ -208,9 +215,14 @@ def build(raw_dir: Path, setup: Setup = setups.CARPET) -> list[Episode]:
     return to_episodes([t for video in sorted(raw_dir.glob("*.mp4")) for t in track_take(video, models, setup)])
 
 
-def cut(clip: TrackedClip, seconds: float) -> TrackedClip:
-    """The clip ending before `seconds` after the clap, as if the hand had left then."""
-    kept = min(clip.kept, int(np.searchsorted(clip.timestamps, seconds)))
+def first_visit(clip: TrackedClip) -> TrackedClip:
+    """The clip ending with the hand's first visit: at the last frame before the hand, once found, goes unseen
+    for LEFT_VIEW or longer. Shorter gaps (the hand lost for a moment) stay inside the visit."""
+    seen = np.flatnonzero(clip.palm_seen[: clip.kept])
+    gaps = np.flatnonzero(np.diff(seen) - 1 >= LEFT_VIEW * clips.FPS)
+    if len(gaps) == 0:
+        return clip
+    kept = int(seen[gaps[0]]) + 1
     return replace(clip, kept=kept, left=float(clip.timestamps[kept - 1]))
 
 
