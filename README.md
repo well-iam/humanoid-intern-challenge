@@ -210,3 +210,7 @@ uv run python scripts/readme_assets.py   # copies the README's figures into asse
 ```
 
 The 1080p takes are not public. To run the clip chain, download the Hugging Face dataset above into `$PWM_DATA`: it holds the tracked episodes, so you can skip `track.py` and start from `embed.py`.
+
+## License
+
+Code: MIT (see `LICENSE`). My clips and the cached results on Hugging Face: CC BY 4.0.
